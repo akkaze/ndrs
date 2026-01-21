@@ -1,0 +1,7 @@
+[package]
+name = "ndrs"
+version = "0.1.0"
+edition = "2024"
+description = "A NumPy-like rust crate"
+license = "MIT"
+[dependencies]
