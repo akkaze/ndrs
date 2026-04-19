@@ -2,19 +2,59 @@
 #include <omp.h>
 #include <cstring>
 
-void cpu_add_f32(const float* a, const float* b, float* c, size_t n) {
+template<typename T>
+struct add_op { T operator()(T x, T y) const { return x + y; } };
+template<typename T>
+struct sub_op { T operator()(T x, T y) const { return x - y; } };
+template<typename T>
+struct mul_op { T operator()(T x, T y) const { return x * y; } };
+template<typename T>
+struct div_op { T operator()(T x, T y) const { return x / y; } };
+
+template<typename T, typename Op>
+void cpu_strided_binary(const T* a, const size_t* a_strides,
+                        const T* b, const size_t* b_strides,
+                        T* c, const size_t* c_strides,
+                        const size_t* shape, int ndim,
+                        size_t total_elements, Op op) {
     #pragma omp parallel for
-    for (size_t i = 0; i < n; ++i) {
-        c[i] = a[i] + b[i];
+    for (size_t idx = 0; idx < total_elements; ++idx) {
+        size_t a_off = 0, b_off = 0, c_off = 0;
+        size_t temp = idx;
+        for (int d = ndim - 1; d >= 0; --d) {
+            size_t i = temp % shape[d];
+            temp /= shape[d];
+            a_off += i * a_strides[d];
+            b_off += i * b_strides[d];
+            c_off += i * c_strides[d];
+        }
+        // 字节偏移转元素索引
+        c[c_off / sizeof(T)] = op(a[a_off / sizeof(T)], b[b_off / sizeof(T)]);
     }
 }
 
-void cpu_add_i32(const int32_t* a, const int32_t* b, int32_t* c, size_t n) {
-    #pragma omp parallel for
-    for (size_t i = 0; i < n; ++i) {
-        c[i] = a[i] + b[i];
+#define DEFINE_CPU_STRIDED_BINARY(T, op_name, op_type) \
+    void cpu_strided_##op_name##_##T( \
+        const T* a, const size_t* a_strides, \
+        const T* b, const size_t* b_strides, \
+        T* c, const size_t* c_strides, \
+        const size_t* shape, int ndim, \
+        size_t total_elements) \
+    { \
+        cpu_strided_binary<T, op_type<T>>(a, a_strides, b, b_strides, c, c_strides, shape, ndim, total_elements, op_type<T>()); \
     }
-}
+
+DEFINE_CPU_STRIDED_BINARY(float, add, add_op)
+DEFINE_CPU_STRIDED_BINARY(float, sub, sub_op)
+DEFINE_CPU_STRIDED_BINARY(float, mul, mul_op)
+DEFINE_CPU_STRIDED_BINARY(float, div, div_op)
+
+// int32_t 类型
+DEFINE_CPU_STRIDED_BINARY(int32_t, add, add_op)
+DEFINE_CPU_STRIDED_BINARY(int32_t, sub, sub_op)
+DEFINE_CPU_STRIDED_BINARY(int32_t, mul, mul_op)
+DEFINE_CPU_STRIDED_BINARY(int32_t, div, div_op)
+
 
 void cpu_strided_copy(const uint8_t* src, size_t src_offset,
                       const size_t* src_strides, int ndim,

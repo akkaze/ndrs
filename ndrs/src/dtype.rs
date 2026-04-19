@@ -16,8 +16,19 @@ pub struct TypeInfo {
 }
 
 pub type BinaryOp = Arc<
-    dyn Fn(*const u8, *const u8, *mut u8, usize, Device, Option<*mut std::ffi::c_void>)
-        + Send
+    dyn Fn(
+            *const u8,
+            *const usize, // a, a_strides
+            *const u8,
+            *const usize, // b, b_strides
+            *mut u8,
+            *const usize, // c, c_strides
+            *const usize, // shape
+            usize,        // ndim
+            usize,        // total_elements
+            Device,
+            Option<*mut std::ffi::c_void>,
+        ) + Send
         + Sync,
 >;
 
@@ -67,41 +78,87 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
             size: 4,
             name: "float32",
         },
-        Arc::new(|a, b, c, n, dev, stream| {
-            let a_ptr = a as *const f32;
-            let b_ptr = b as *const f32;
-            let c_ptr = c as *mut f32;
-            match dev {
-                Device::CPU => unsafe {
-                    (cpu_add_f32)(a_ptr, b_ptr, c_ptr, n);
-                },
-                Device::GPU(_) => unsafe {
-                    (gpu_add_f32)(a_ptr, b_ptr, c_ptr, n, stream.unwrap());
-                },
-            }
-        }),
+        Arc::new(
+            |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
+                let a_ptr = a as *const f32;
+                let b_ptr = b as *const f32;
+                let c_ptr = c as *mut f32;
+                match dev {
+                    Device::CPU => unsafe {
+                        cpu_strided_add_f32(
+                            a_ptr,
+                            a_strides,
+                            b_ptr,
+                            b_strides,
+                            c_ptr,
+                            c_strides,
+                            shape,
+                            ndim as i32,
+                            n,
+                        )
+                    },
+                    Device::GPU(_) => unsafe {
+                        gpu_strided_add_f32(
+                            a_ptr,
+                            a_strides,
+                            b_ptr,
+                            b_strides,
+                            c_ptr,
+                            c_strides,
+                            shape,
+                            ndim as i32,
+                            n,
+                            stream.unwrap(),
+                        );
+                    },
+                }
+            },
+        ),
     );
 
     // int32
     reg.register(
-        DTYPE_INT32,
+        DTYPE_FLOAT32,
         TypeInfo {
             size: 4,
-            name: "int32",
+            name: "float32",
         },
-        Arc::new(|a, b, c, n, dev, stream| {
-            let a_ptr = a as *const i32;
-            let b_ptr = b as *const i32;
-            let c_ptr = c as *mut i32;
-            match dev {
-                Device::CPU => unsafe {
-                    (cpu_add_i32)(a_ptr, b_ptr, c_ptr, n);
-                },
-                Device::GPU(_) => unsafe {
-                    (gpu_add_i32)(a_ptr, b_ptr, c_ptr, n, stream.unwrap());
-                },
-            }
-        }),
+        Arc::new(
+            |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
+                let a_ptr = a as *const i32;
+                let b_ptr = b as *const i32;
+                let c_ptr = c as *mut i32;
+                match dev {
+                    Device::CPU => unsafe {
+                        cpu_strided_add_i32(
+                            a_ptr,
+                            a_strides,
+                            b_ptr,
+                            b_strides,
+                            c_ptr,
+                            c_strides,
+                            shape,
+                            ndim as i32,
+                            n,
+                        )
+                    },
+                    Device::GPU(_) => unsafe {
+                        gpu_strided_add_i32(
+                            a_ptr,
+                            a_strides,
+                            b_ptr,
+                            b_strides,
+                            c_ptr,
+                            c_strides,
+                            shape,
+                            ndim as i32,
+                            n,
+                            stream.unwrap(),
+                        );
+                    },
+                }
+            },
+        ),
     );
 
     reg

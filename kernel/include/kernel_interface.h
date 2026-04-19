@@ -8,42 +8,59 @@
 #define EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" {
+extern "C"
+{
     // 加法 (float32)
-    EXPORT void cpu_add_f32(const float* a, const float* b, float* c, size_t n);
-    EXPORT int gpu_add_f32(const float* a, const float* b, float* c, size_t n, void* stream);
-
+    EXPORT void cpu_strided_add_f32(const float *a, const size_t *a_strides,
+                                    const float *b, const size_t *b_strides,
+                                    float *c, const size_t *c_strides,
+                                    const size_t *shape, int ndim,
+                                    size_t total_elements);
+    EXPORT int gpu_strided_add_f32(const float *a, const size_t *a_strides,
+                                   const float *b, const size_t *b_strides,
+                                   float *c, const size_t *c_strides,
+                                   const size_t *shape, int ndim,
+                                   size_t total_elements, void *stream);
     // 加法 (int32)
-    EXPORT void cpu_add_i32(const int32_t* a, const int32_t* b, int32_t* c, size_t n);
-    EXPORT int gpu_add_i32(const int32_t* a, const int32_t* b, int32_t* c, size_t n, void* stream);
+    EXPORT void cpu_strided_add_i32(const int32_t *a, const size_t *a_strides,
+                                    const int32_t *b, const size_t *b_strides,
+                                    int32_t *c, const size_t *c_strides,
+                                    const size_t *shape, int ndim,
+                                    size_t total_elements);
+
+    EXPORT int gpu_strided_add_i32(const int32_t *a, const size_t *a_strides,
+                                   const int32_t *b, const size_t *b_strides,
+                                   int32_t *c, const size_t *c_strides,
+                                   const size_t *shape, int ndim,
+                                   size_t total_elements, void *stream);
 
     // 跨步拷贝 (通用，字节粒度)
-    EXPORT void cpu_strided_copy(const uint8_t* src, size_t src_offset,
-                                 const size_t* src_strides, int ndim,
-                                 const size_t* shape,
-                                 uint8_t* dst, size_t dst_offset,
-                                 const size_t* dst_strides,
+    EXPORT void cpu_strided_copy(const uint8_t *src, size_t src_offset,
+                                 const size_t *src_strides, int ndim,
+                                 const size_t *shape,
+                                 uint8_t *dst, size_t dst_offset,
+                                 const size_t *dst_strides,
                                  size_t elem_size, size_t total_elements);
 
-    EXPORT int gpu_strided_copy(const uint8_t* src, size_t src_offset,
-                                const size_t* src_strides, int ndim,
-                                const size_t* shape,
-                                uint8_t* dst, size_t dst_offset,
-                                const size_t* dst_strides,
+    EXPORT int gpu_strided_copy(const uint8_t *src, size_t src_offset,
+                                const size_t *src_strides, int ndim,
+                                const size_t *shape,
+                                uint8_t *dst, size_t dst_offset,
+                                const size_t *dst_strides,
                                 size_t elem_size, size_t total_elements,
-                                void* stream);
+                                void *stream);
 
     // 连续化
-    EXPORT void cpu_contiguous(const uint8_t* src, size_t src_offset,
-                               const size_t* src_strides, int ndim,
-                               const size_t* shape,
-                               uint8_t* dst, size_t elem_size,
+    EXPORT void cpu_contiguous(const uint8_t *src, size_t src_offset,
+                               const size_t *src_strides, int ndim,
+                               const size_t *shape,
+                               uint8_t *dst, size_t elem_size,
                                size_t total_elements);
 
-    EXPORT int gpu_contiguous(const uint8_t* src, size_t src_offset,
-                              const size_t* src_strides, int ndim,
-                              const size_t* shape,
-                              uint8_t* dst, size_t elem_size,
+    EXPORT int gpu_contiguous(const uint8_t *src, size_t src_offset,
+                              const size_t *src_strides, int ndim,
+                              const size_t *shape,
+                              uint8_t *dst, size_t elem_size,
                               size_t total_elements,
-                              void* stream);
+                              void *stream);
 }

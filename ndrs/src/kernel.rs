@@ -1,20 +1,51 @@
 use std::ffi::c_void;
 
 extern "C" {
-    pub fn cpu_add_f32(a: *const f32, b: *const f32, c: *mut f32, n: usize);
-    pub fn gpu_add_f32(
+    pub fn cpu_strided_add_f32(
         a: *const f32,
+        a_strides: *const usize,
         b: *const f32,
+        b_strides: *const usize,
         c: *mut f32,
-        n: usize,
+        c_strides: *const usize,
+        shape: *const usize,
+        ndim: i32,
+        total_elements: usize,
+    );
+    pub fn gpu_strided_add_f32(
+        a: *const f32,
+        a_strides: *const usize,
+        b: *const f32,
+        b_strides: *const usize,
+        c: *mut f32,
+        c_strides: *const usize,
+        shape: *const usize,
+        ndim: i32,
+        total_elements: usize,
         stream: *mut c_void,
     ) -> i32;
-    pub fn cpu_add_i32(a: *const i32, b: *const i32, c: *mut i32, n: usize);
-    pub fn gpu_add_i32(
+
+    pub fn cpu_strided_add_i32(
         a: *const i32,
+        a_strides: *const usize,
         b: *const i32,
+        b_strides: *const usize,
         c: *mut i32,
-        n: usize,
+        c_strides: *const usize,
+        shape: *const usize,
+        ndim: i32,
+        total_elements: usize,
+    );
+    pub fn gpu_strided_add_i32(
+        a: *const i32,
+        a_strides: *const usize,
+        b: *const i32,
+        b_strides: *const usize,
+        c: *mut i32,
+        c_strides: *const usize,
+        shape: *const usize,
+        ndim: i32,
+        total_elements: usize,
         stream: *mut c_void,
     ) -> i32;
 

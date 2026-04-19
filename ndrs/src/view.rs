@@ -416,9 +416,12 @@ macro_rules! impl_tensor_view {
         impl Add for $name {
             type Output = Self;
             fn add(self, other: Self) -> Self::Output {
-                assert_eq!(self.shape(), other.shape(), "Shapes must match for Add");
-                let mut out = self.create_output().expect("Failed to create output");
-                Self::add(&self, &other, &mut out).expect("Addition failed");
+                let target_shape = broadcast_shapes(self.shape(), other.shape())
+                    .expect("Incompatible shapes for broadcast");
+                let a_bcast = self.broadcast_to(&target_shape).unwrap();
+                let b_bcast = other.broadcast_to(&target_shape).unwrap();
+                let mut out = a_bcast.create_output().unwrap(); // 基于广播后形状创建
+                $name::add(&a_bcast, &b_bcast, &mut out).unwrap();
                 out
             }
         }
@@ -458,29 +461,67 @@ macro_rules! impl_tensor_view {
                 let a_t = $borrow(&a.handle);
                 let b_t = $borrow(&b.handle);
                 let mut out_t = $borrow_mut(&out.handle);
-                if a_t.dtype() != b_t.dtype() || a_t.dtype() != out_t.dtype() {
-                    return Err("Dtype mismatch in add".into());
-                }
-                let n = a.shape.iter().product();
+
+                // 获取步长和形状
+                let a_strides = a.strides();
+                let b_strides = b.strides();
+                let c_strides = out.strides();
+                let shape = a.shape(); // 假设形状相同
+
+                let n = a.shape().iter().product();
                 let add_op = get_add_op(a_t.dtype()).expect("Add op not registered");
-                let stream_opt = match a_t.device() {
-                    Device::CPU => None,
-                    Device::GPU(_) => Some(&a_t.cuda_ctx_ref().unwrap().stream),
-                };
-                let a_ptr = a_t.data_ptr(stream_opt);
-                let b_ptr = b_t.data_ptr(stream_opt);
-                let c_ptr = out_t.data_mut_ptr(stream_opt);
-                let c_stream = match a_t.device() {
-                    Device::CPU => None,
-                    Device::GPU(_) => Some(a_t.cuda_ctx_ref().unwrap().stream_ptr()),
-                };
-                add_op(a_ptr, b_ptr, c_ptr, n, a_t.device(), c_stream);
-                if let Device::GPU(_) = a_t.device() {
-                    a_t.cuda_ctx_ref()
-                        .unwrap()
-                        .stream
-                        .synchronize()
-                        .map_err(|e| e.to_string())?;
+                match a_t.device() {
+                    Device::CPU => {
+                        let a_ptr = a_t.data_ptr(None);
+                        let b_ptr = b_t.data_ptr(None);
+                        let c_ptr = out_t.data_mut_ptr(None);
+                        add_op(
+                            a_ptr,
+                            a.strides().as_ptr(),
+                            b_ptr,
+                            b.strides().as_ptr(),
+                            c_ptr,
+                            out.strides().as_ptr(),
+                            a.shape().as_ptr(),
+                            a.shape().len(),
+                            n,
+                            Device::CPU,
+                            None,
+                        );
+                    }
+                    Device::GPU(_) => {
+                        let ctx = a_t.cuda_ctx_ref().unwrap();
+                        let stream = &ctx.stream;
+                        // 将步长和形状复制到 GPU
+                        let a_strides_dev =
+                            stream.clone_htod(a.strides()).map_err(|e| e.to_string())?;
+                        let b_strides_dev =
+                            stream.clone_htod(b.strides()).map_err(|e| e.to_string())?;
+                        let c_strides_dev = stream
+                            .clone_htod(out.strides())
+                            .map_err(|e| e.to_string())?;
+                        let shape_dev = stream.clone_htod(a.shape()).map_err(|e| e.to_string())?;
+
+                        let a_ptr = a_t.data_ptr(Some(stream));
+                        let b_ptr = b_t.data_ptr(Some(stream));
+                        let c_ptr = out_t.data_mut_ptr(Some(stream));
+                        let stream_ptr = ctx.stream_ptr();
+                        
+                        add_op(
+                            a_ptr,
+                            a_strides_dev.device_ptr(stream).0 as *const usize,
+                            b_ptr,
+                            b_strides_dev.device_ptr(stream).0 as *const usize,
+                            c_ptr,
+                            c_strides_dev.device_ptr(stream).0 as *const usize,
+                            shape_dev.device_ptr(stream).0 as *const usize,
+                            a.shape().len(),
+                            n,
+                            Device::GPU(0),
+                            Some(stream_ptr),
+                        );
+                        stream.synchronize().map_err(|e| e.to_string())?;
+                    }
                 }
                 Ok(())
             }
@@ -1028,5 +1069,36 @@ mod tests {
         let mut back_cpu = back_tensor.into_arc().as_view();
         gpu_view.to_cpu(&mut back_cpu).unwrap();
         assert_eq!(arc_view_to_vec(&back_cpu), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_add_broadcast() {
+        let a = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0], vec![3, 1]);
+        let b = Tensor::new_cpu_from_f32(vec![4.0, 5.0, 6.0, 7.0], vec![1, 4]);
+        let a_view = a.into_rc().as_view();
+        let b_view = b.into_rc().as_view();
+
+        let target_shape = broadcast_shapes(a_view.shape(), b_view.shape()).unwrap();
+        assert_eq!(target_shape, vec![3, 4]);
+
+        let a_bcast = a_view.broadcast_to(&target_shape).unwrap();
+        let b_bcast = b_view.broadcast_to(&target_shape).unwrap();
+
+        let out_tensor = Tensor::new_cpu_from_bytes(
+            vec![0u8; 3 * 4 * 4].into_boxed_slice(),
+            vec![3, 4],
+            a_view.dtype(),
+        )
+        .unwrap();
+        let out_handle = out_tensor.into_rc();
+        let mut out_view = out_handle.as_view();
+
+        RcTensorView::add(&a_bcast, &b_bcast, &mut out_view).unwrap();
+
+        let result = rc_view_to_vec(&out_view);
+        let expected: Vec<f32> = (0..3)
+            .flat_map(|i| (0..4).map(move |j| (i + 1) as f32 + (j + 4) as f32))
+            .collect();
+        assert_eq!(result, expected);
     }
 }

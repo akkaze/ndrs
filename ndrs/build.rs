@@ -29,7 +29,7 @@ fn main() {
         .expect("Failed to build kernel");
     assert!(status.success());
 
-    let kernel_lib_src = build_dir.join("libndrs_kernel.so");
+    let kernel_lib_src = build_dir.join("libndrs_kernel.a");
 
     // 复制到 cargo 输出目录
     let out_dir = env::var("OUT_DIR").unwrap();
@@ -38,7 +38,7 @@ fn main() {
         .nth(2)
         .unwrap()
         .to_path_buf();
-    let kernel_lib_dst = target_dir.join("libndrs_kernel.so");
+    let kernel_lib_dst = target_dir.join("libndrs_kernel.a");
     fs::copy(&kernel_lib_src, &kernel_lib_dst)
         .expect("Failed to copy kernel library to target dir");
     println!("cargo:rerun-if-changed={}", kernel_lib_src.display());
@@ -51,7 +51,7 @@ fn main() {
     if !python_ndrs_dir.exists() {
         fs::create_dir_all(&python_ndrs_dir).unwrap();
     }
-    let python_kernel_dst = python_ndrs_dir.join("libndrs_kernel.so");
+    let python_kernel_dst = python_ndrs_dir.join("libndrs_kernel.a");
     fs::copy(&kernel_lib_src, &python_kernel_dst)
         .expect("Failed to copy kernel library to python/ndrs/");
     println!(
