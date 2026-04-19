@@ -1,7 +1,9 @@
-[package]
-name = "ndrs"
-version = "0.1.0"
-edition = "2024"
-description = "A NumPy-like rust crate"
-license = "MIT"
-[dependencies]
+[workspace]
+members = ["ndrs", "python"]
+resolver = "2"
+
+[workspace.dependencies]
+cudarc = { version = "0.19.4", features = ["cuda-12000", "std"] }
+libloading = "0.8"
+once_cell = "1.19"
+thiserror = "1.0"

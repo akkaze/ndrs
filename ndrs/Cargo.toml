@@ -1,0 +1,11 @@
+[package]
+name = "ndrs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cudarc = { workspace = true }
+once_cell = { workspace = true }
+thiserror = { workspace = true }
+bytemuck = { version = "1.14", features = ["derive"] }
+ndrs_macros = { path = "../ndrs_macros" }
