@@ -98,4 +98,34 @@ extern "C" {
         total_elements: usize,
         stream: *mut c_void,
     ) -> i32;
+
+    pub fn cpu_matmul_strided_f32(
+        a: *const f32,
+        a_stride_row: usize,
+        a_stride_col: usize,
+        b: *const f32,
+        b_stride_row: usize,
+        b_stride_col: usize,
+        c: *mut f32,
+        c_stride_row: usize,
+        c_stride_col: usize,
+        m: i32,
+        n: i32,
+        k: i32,
+    );
+    pub fn gpu_matmul_strided_f32(
+        a: *const f32,
+        a_stride_row: usize,
+        a_stride_col: usize,
+        b: *const f32,
+        b_stride_row: usize,
+        b_stride_col: usize,
+        c: *mut f32,
+        c_stride_row: usize,
+        c_stride_col: usize,
+        m: i32,
+        n: i32,
+        k: i32,
+        stream: *mut std::ffi::c_void,
+    ) -> i32;
 }

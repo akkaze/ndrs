@@ -63,4 +63,15 @@ extern "C"
                               uint8_t *dst, size_t elem_size,
                               size_t total_elements,
                               void *stream);
+
+    EXPORT void cpu_matmul_strided_f32(
+        const float *A, size_t a_stride_row, size_t a_stride_col,
+        const float *B, size_t b_stride_row, size_t b_stride_col,
+        float *C, size_t c_stride_row, size_t c_stride_col,
+        int M, int N, int K);
+    EXPORT int gpu_matmul_strided_f32(
+        const float *A, size_t a_stride_row, size_t a_stride_col,
+        const float *B, size_t b_stride_row, size_t b_stride_col,
+        float *C, size_t c_stride_row, size_t c_stride_col,
+        int M, int N, int K, void *stream);
 }

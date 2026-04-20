@@ -41,8 +41,8 @@ __global__ void strided_binary_kernel(
 }
 
 
-#define DEFINE_STRIDED_BINARY_KERNEL(T, op_name, op_type) \
-    int gpu_strided_##op_name##_##T( \
+#define DEFINE_STRIDED_BINARY_KERNEL(T, op_name, op_type, type_name) \
+    int gpu_strided_##op_name##_##type_name( \
         const T* a, const size_t* a_strides, \
         const T* b, const size_t* b_strides, \
         T* c, const size_t* c_strides, \
@@ -60,11 +60,11 @@ __global__ void strided_binary_kernel(
 
 
 // 实例化需要的类型和运算
-DEFINE_STRIDED_BINARY_KERNEL(float, add, add_op)
-DEFINE_STRIDED_BINARY_KERNEL(float, sub, sub_op)
-DEFINE_STRIDED_BINARY_KERNEL(float, mul, mul_op)
-DEFINE_STRIDED_BINARY_KERNEL(float, div, div_op)
-DEFINE_STRIDED_BINARY_KERNEL(int32_t, add, add_op)
+DEFINE_STRIDED_BINARY_KERNEL(float, add, add_op, f32)
+DEFINE_STRIDED_BINARY_KERNEL(float, sub, sub_op, f32)
+DEFINE_STRIDED_BINARY_KERNEL(float, mul, mul_op, f32)
+DEFINE_STRIDED_BINARY_KERNEL(float, div, div_op, f32)
+DEFINE_STRIDED_BINARY_KERNEL(int32_t, add, add_op, i32)
 
 
 __global__ void strided_copy_kernel(const uint8_t* src, size_t src_offset,
@@ -146,4 +146,40 @@ int gpu_contiguous(const uint8_t* src, size_t src_offset,
         fprintf(stderr, "gpu_contiguous kernel launch failed: %s\n", cudaGetErrorString(err));
     }
     return (int)err;
+}
+
+__global__ void matmul_strided_f32_kernel(
+    const float* A, size_t a_stride_row, size_t a_stride_col,
+    const float* B, size_t b_stride_row, size_t b_stride_col,
+    float* C, size_t c_stride_row, size_t c_stride_col,
+    int M, int N, int K)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= M || col >= N) return;
+    float sum = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        const float* a_ptr = (const float*)((const char*)A + row * a_stride_row + k * a_stride_col);
+        const float* b_ptr = (const float*)((const char*)B + k * b_stride_row + col * b_stride_col);
+        sum += *a_ptr * *b_ptr;
+    }
+    float* c_ptr = (float*)((char*)C + row * c_stride_row + col * c_stride_col);
+    *c_ptr = sum;
+}
+
+int gpu_matmul_strided_f32(
+    const float* A, size_t a_stride_row, size_t a_stride_col,
+    const float* B, size_t b_stride_row, size_t b_stride_col,
+    float* C, size_t c_stride_row, size_t c_stride_col,
+    int M, int N, int K, void* stream)
+{
+    cudaStream_t s = reinterpret_cast<cudaStream_t>(stream);
+    dim3 threads(16, 16);
+    dim3 blocks((N + threads.x - 1) / threads.x, (M + threads.y - 1) / threads.y);
+    matmul_strided_f32_kernel<<<blocks, threads, 0, s>>>(
+        A, a_stride_row, a_stride_col,
+        B, b_stride_row, b_stride_col,
+        C, c_stride_row, c_stride_col,
+        M, N, K);
+    return cudaGetLastError();
 }

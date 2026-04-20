@@ -33,8 +33,8 @@ void cpu_strided_binary(const T* a, const size_t* a_strides,
     }
 }
 
-#define DEFINE_CPU_STRIDED_BINARY(T, op_name, op_type) \
-    void cpu_strided_##op_name##_##T( \
+#define DEFINE_CPU_STRIDED_BINARY(T, op_name, op_type, type_name) \
+    void cpu_strided_##op_name##_##type_name( \
         const T* a, const size_t* a_strides, \
         const T* b, const size_t* b_strides, \
         T* c, const size_t* c_strides, \
@@ -44,16 +44,16 @@ void cpu_strided_binary(const T* a, const size_t* a_strides,
         cpu_strided_binary<T, op_type<T>>(a, a_strides, b, b_strides, c, c_strides, shape, ndim, total_elements, op_type<T>()); \
     }
 
-DEFINE_CPU_STRIDED_BINARY(float, add, add_op)
-DEFINE_CPU_STRIDED_BINARY(float, sub, sub_op)
-DEFINE_CPU_STRIDED_BINARY(float, mul, mul_op)
-DEFINE_CPU_STRIDED_BINARY(float, div, div_op)
+DEFINE_CPU_STRIDED_BINARY(float, add, add_op, f32)
+DEFINE_CPU_STRIDED_BINARY(float, sub, sub_op, f32)
+DEFINE_CPU_STRIDED_BINARY(float, mul, mul_op, f32)
+DEFINE_CPU_STRIDED_BINARY(float, div, div_op, f32)
 
 // int32_t 类型
-DEFINE_CPU_STRIDED_BINARY(int32_t, add, add_op)
-DEFINE_CPU_STRIDED_BINARY(int32_t, sub, sub_op)
-DEFINE_CPU_STRIDED_BINARY(int32_t, mul, mul_op)
-DEFINE_CPU_STRIDED_BINARY(int32_t, div, div_op)
+DEFINE_CPU_STRIDED_BINARY(int32_t, add, add_op, i32)
+DEFINE_CPU_STRIDED_BINARY(int32_t, sub, sub_op, i32)
+DEFINE_CPU_STRIDED_BINARY(int32_t, mul, mul_op, i32)
+DEFINE_CPU_STRIDED_BINARY(int32_t, div, div_op, i32)
 
 
 void cpu_strided_copy(const uint8_t* src, size_t src_offset,
@@ -92,5 +92,26 @@ void cpu_contiguous(const uint8_t* src, size_t src_offset,
             src_off += i * src_strides[d];
         }
         std::memcpy(dst + idx * elem_size, src + src_off, elem_size);
+    }
+}
+
+void cpu_matmul_strided_f32(
+    const float* A, size_t a_stride_row, size_t a_stride_col,
+    const float* B, size_t b_stride_row, size_t b_stride_col,
+    float* C, size_t c_stride_row, size_t c_stride_col,
+    int M, int N, int K) 
+{
+    #pragma omp parallel for collapse(2)
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
+            float sum = 0.0f;
+            for (int k = 0; k < K; ++k) {
+                const float* a_ptr = (const float*)((const char*)A + i * a_stride_row + k * a_stride_col);
+                const float* b_ptr = (const float*)((const char*)B + k * b_stride_row + j * b_stride_col);
+                sum += *a_ptr * *b_ptr;
+            }
+            float* c_ptr = (float*)((char*)C + i * c_stride_row + j * c_stride_col);
+            *c_ptr = sum;
+        }
     }
 }

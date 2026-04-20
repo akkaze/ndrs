@@ -18,17 +18,18 @@ pub struct TypeInfo {
 pub type BinaryOp = Arc<
     dyn Fn(
             *const u8,
-            *const usize, // a, a_strides
+            *const usize,
             *const u8,
-            *const usize, // b, b_strides
+            *const usize,
             *mut u8,
-            *const usize, // c, c_strides
-            *const usize, // shape
-            usize,        // ndim
-            usize,        // total_elements
+            *const usize,
+            *const usize,
+            usize,
+            usize,
             Device,
             Option<*mut std::ffi::c_void>,
-        ) + Send
+        ) -> Result<(), String>
+        + Send
         + Sync,
 >;
 
@@ -74,10 +75,7 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
     // float32
     reg.register(
         DTYPE_FLOAT32,
-        TypeInfo {
-            size: 4,
-            name: "float32",
-        },
+        TypeInfo { size: 4, name: "float32" },
         Arc::new(
             |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
                 let a_ptr = a as *const f32;
@@ -95,10 +93,11 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
                             shape,
                             ndim as i32,
                             n,
-                        )
+                        );
+                        Ok(())
                     },
                     Device::GPU(_) => unsafe {
-                        gpu_strided_add_f32(
+                        let err = gpu_strided_add_f32(
                             a_ptr,
                             a_strides,
                             b_ptr,
@@ -110,19 +109,21 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
                             n,
                             stream.unwrap(),
                         );
+                        if err != 0 {
+                            Err(format!("GPU add failed with error {}", err))
+                        } else {
+                            Ok(())
+                        }
                     },
                 }
             },
         ),
     );
 
-    // int32
+    // int32 (修复：使用正确的 DType 和名称)
     reg.register(
-        DTYPE_FLOAT32,
-        TypeInfo {
-            size: 4,
-            name: "float32",
-        },
+        DTYPE_INT32,
+        TypeInfo { size: 4, name: "int32" },
         Arc::new(
             |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
                 let a_ptr = a as *const i32;
@@ -140,10 +141,11 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
                             shape,
                             ndim as i32,
                             n,
-                        )
+                        );
+                        Ok(())
                     },
                     Device::GPU(_) => unsafe {
-                        gpu_strided_add_i32(
+                        let err = gpu_strided_add_i32(
                             a_ptr,
                             a_strides,
                             b_ptr,
@@ -155,6 +157,11 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
                             n,
                             stream.unwrap(),
                         );
+                        if err != 0 {
+                            Err(format!("GPU add failed with error {}", err))
+                        } else {
+                            Ok(())
+                        }
                     },
                 }
             },

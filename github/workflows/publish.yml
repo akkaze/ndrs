@@ -1,0 +1,47 @@
+name: Publish to crates.io
+
+on:
+  push:
+    tags:
+      - 'v*'             # 匹配 v0.1.0, v1.2.3 等
+
+jobs:
+  test-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run tests (no default features)
+        run: cargo test --no-default-features
+
+      - name: Run tests with CUDA feature (if possible)
+        run: cargo test --features cuda
+        continue-on-error: true   # 若 CI 环境无 CUDA，不中断发布
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Dry-run publish
+        run: cargo publish --dry-run --manifest-path ndrs/Cargo.toml
+
+      - name: Login to crates.io
+        run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: Publish ndrs crate
+        run: cargo publish --manifest-path ndrs/Cargo.toml

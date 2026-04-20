@@ -1,11 +1,25 @@
 [package]
 name = "ndrs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+description = "A tensor library with GPU support"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/akkaze/ndrs"
+homepage = "https://github.com/akkaze/ndrs"
+documentation = "https://docs.rs/ndrs"
 
 [dependencies]
 cudarc = { workspace = true }
 once_cell = { workspace = true }
 thiserror = { workspace = true }
 bytemuck = { version = "1.14", features = ["derive"] }
-ndrs_macros = { path = "../ndrs_macros" }
+ndrs_macros = { version = "0.2.0", path = "../ndrs_macros" }
+
+[build-dependencies]
+walkdir = "2"
+cc = "1.0"
+cudaforge = "0.1"   # 用于编译 CUDA 代码
+
+[features]
+default = ["cuda"]
+cuda = []
