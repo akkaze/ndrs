@@ -2,11 +2,11 @@ import ndrs as nd
 import numpy as np
 import pytest
 
-def _cuda_available():
-    return nd.is_cuda_available()
+def _cuda::is_available():
+    return nd.is_cuda::is_available()
 
 def _skip_if_no_cuda():
-    if not _cuda_available():
+    if not _cuda::is_available():
         pytest.skip("CUDA not available")
 
 class TestDevice:

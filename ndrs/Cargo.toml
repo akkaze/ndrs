@@ -9,11 +9,16 @@ homepage = "https://github.com/akkaze/ndrs"
 documentation = "https://docs.rs/ndrs"
 
 [dependencies]
-cudarc = { workspace = true }
-once_cell = { workspace = true }
-thiserror = { workspace = true }
+cudarc = { version = "0.19.4", features = ["cuda-12000", "std"] }
+once_cell = "1.19"
+thiserror = "1.0"
 bytemuck = { version = "1.14", features = ["derive"] }
-ndrs_macros = { version = "0.2.0", path = "../ndrs_macros" }
+parking_lot = { version = "0.12", features = ["deadlock_detection"] }
+threadpool = "1.8"
+num_cpus = "1.16"
+env_logger = "0.11"
+log = "0.4"
+ctor = "0.2"
 
 [build-dependencies]
 walkdir = "2"

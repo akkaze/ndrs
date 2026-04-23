@@ -75,14 +75,17 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
     // float32
     reg.register(
         DTYPE_FLOAT32,
-        TypeInfo { size: 4, name: "float32" },
+        TypeInfo {
+            size: 4,
+            name: "float32",
+        },
         Arc::new(
             |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
                 let a_ptr = a as *const f32;
                 let b_ptr = b as *const f32;
                 let c_ptr = c as *mut f32;
                 match dev {
-                    Device::CPU => unsafe {
+                    Device::Cpu => unsafe {
                         cpu_strided_add_f32(
                             a_ptr,
                             a_strides,
@@ -96,7 +99,7 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
                         );
                         Ok(())
                     },
-                    Device::GPU(_) => unsafe {
+                    Device::Cuda(_) => unsafe {
                         let err = gpu_strided_add_f32(
                             a_ptr,
                             a_strides,
@@ -123,14 +126,17 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
     // int32 (修复：使用正确的 DType 和名称)
     reg.register(
         DTYPE_INT32,
-        TypeInfo { size: 4, name: "int32" },
+        TypeInfo {
+            size: 4,
+            name: "int32",
+        },
         Arc::new(
             |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
                 let a_ptr = a as *const i32;
                 let b_ptr = b as *const i32;
                 let c_ptr = c as *mut i32;
                 match dev {
-                    Device::CPU => unsafe {
+                    Device::Cpu => unsafe {
                         cpu_strided_add_i32(
                             a_ptr,
                             a_strides,
@@ -144,7 +150,7 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
                         );
                         Ok(())
                     },
-                    Device::GPU(_) => unsafe {
+                    Device::Cuda(_) => unsafe {
                         let err = gpu_strided_add_i32(
                             a_ptr,
                             a_strides,

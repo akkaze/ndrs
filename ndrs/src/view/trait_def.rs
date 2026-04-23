@@ -1,8 +1,8 @@
 //! TensorViewOps 核心 trait
 
+use super::slice::SliceInfo;
 use crate::device::Device;
 use crate::dtype::DType;
-use super::slice::SliceInfo;
 
 pub trait TensorViewOps: Clone {
     type Handle: Clone;
@@ -14,18 +14,29 @@ pub trait TensorViewOps: Clone {
         let mut axes: Vec<usize> = (0..self.shape().len()).rev().collect();
         self.transpose(&axes)
     }
+    fn is_contiguous(&self) -> bool;
     fn concat_with_out(views: &[&Self], axis: usize, out: &mut Self) -> Result<(), String>;
-    fn split_with_outs(&self, sizes: &[usize], axis: usize, out_views: &mut [Self]) -> Result<(), String>;
+    fn split_with_outs(
+        &self,
+        sizes: &[usize],
+        axis: usize,
+        out_views: &mut [Self],
+    ) -> Result<(), String>;
     fn concat(views: &[&Self], axis: usize) -> Result<Self, String>;
     fn split(&self, sizes: &[usize], axis: usize) -> Result<Vec<Self>, String>;
     fn strided_copy_to(&self, dst: &mut Self) -> Result<(), String>;
     fn contiguous(&self, out: &mut Self) -> Result<(), String>;
+    /// 带输出张量的设备间传输（目标张量必须已分配）
     fn to(&self, out: &mut Self, target_device: Device) -> Result<(), String>;
-    fn to_cpu(&self, out: &mut Self) -> Result<(), String> {
-        self.to(out, Device::CPU)
+
+    fn to_device(&self, target_device: Device) -> Result<Self, String>;
+
+    fn to_cpu(&self) -> Result<Self, String> {
+        self.to_device(Device::Cpu)
     }
-    fn to_gpu(&self, out: &mut Self, device_id: usize) -> Result<(), String> {
-        self.to(out, Device::GPU(device_id))
+
+    fn to_gpu(&self, device_id: usize) -> Result<Self, String> {
+        self.to_device(Device::Cuda(device_id))
     }
     fn matmul_with_out(&self, other: &Self, out: &mut Self) -> Result<(), String>;
     fn matmul(&self, other: &Self) -> Result<Self, String>;

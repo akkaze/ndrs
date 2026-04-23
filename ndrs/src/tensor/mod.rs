@@ -1,25 +1,27 @@
-use crate::device::{CudaContextWrapper, Device};
 use crate::dtype::DType;
 use std::sync::Arc;
 
-mod data;
-mod construction;
 mod access;
+mod construction;
 mod conversion;
+mod data;
+mod handle_ops;
 
 // 不再重新导出 DataPtr
-pub use construction::*;
+use crate::Device;
 pub use access::*;
+pub use construction::*;
 pub use conversion::*;
 pub use data::*;
+pub use handle_ops::{ArcTensor, RcTensor};
 
+#[derive(Debug)]
 pub struct Tensor {
     pub(crate) data: DataPtr,
     pub(crate) shape: Vec<usize>,
     pub(crate) strides: Vec<usize>,
     pub(crate) dtype: DType,
     pub(crate) device: Device,
-    pub(crate) cuda_ctx: Option<Arc<CudaContextWrapper>>,
 }
 #[cfg(test)]
 mod tests {
@@ -41,9 +43,8 @@ mod tests {
         let t = Tensor::new_cpu_from_f32(vec![1.0, 2.0], vec![2]);
         let bytes = t.as_bytes().unwrap();
         assert_eq!(bytes.len(), 8);
-        let values: Vec<f32> = unsafe {
-            std::slice::from_raw_parts(bytes.as_ptr() as *const f32, 2).to_vec()
-        };
+        let values: Vec<f32> =
+            unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, 2).to_vec() };
         assert_eq!(values, vec![1.0, 2.0]);
     }
 
@@ -51,13 +52,13 @@ mod tests {
     fn test_tensor_into_rc() {
         let t = Tensor::new_cpu_from_f32(vec![1.0, 2.0], vec![2]);
         let rc = t.into_rc();
-        assert_eq!(rc.borrow().shape(), &[2]);
+        assert_eq!(rc.0.borrow().shape(), &[2]);
     }
 
     #[test]
     fn test_tensor_into_arc() {
         let t = Tensor::new_cpu_from_f32(vec![1.0, 2.0], vec![2]);
         let arc = t.into_arc();
-        assert_eq!(arc.lock().unwrap().shape(), &[2]);
+        assert_eq!(arc.0.lock().borrow().shape(), &[2]);
     }
 }

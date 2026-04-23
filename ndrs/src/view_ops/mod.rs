@@ -2,8 +2,9 @@
 
 pub mod binary;
 pub mod copy;
+pub mod device_transfer;
+pub mod linalg;
 pub mod matmul;
+pub mod reduction;
 pub mod shape;
 pub mod unary;
-pub mod reduction;
-pub mod linalg;

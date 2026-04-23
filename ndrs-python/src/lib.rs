@@ -1,30 +1,19 @@
 use pyo3::prelude::*;
 
-mod device;
+mod cuda;
 mod tensor;
-mod ops;
-mod indexing;
-mod conversion;
-mod utils;
 
 #[pymodule]
-fn _ndrs(_py: Python, m: &PyModule) -> PyResult<()> {
-    // 注册类
-    m.add_class::<device::PyDevice>()?;
-    m.add_class::<device::PyStream>()?;
-    m.add_class::<device::PyEvent>()?;
-    m.add_class::<tensor::PyTensor>()?;
-    m.add_class::<tensor::PyTensorView>()?;
+fn ndrs_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // 注册 cuda 子模块
+    let cuda_module = PyModule::new(m.py(), "cuda")?;
+    cuda::device::register(&cuda_module)?;
+    cuda::stream::register(&cuda_module)?;
+    cuda::event::register(&cuda_module)?;
+    m.add_submodule(&cuda_module)?;
 
-    // 注册函数
-    m.add_function(wrap_pyfunction!(device::is_cuda_available, m)?)?;
-    m.add_function(wrap_pyfunction!(device::get_cuda_device_count, m)?)?;
-    m.add_function(wrap_pyfunction!(device::null_stream, m)?)?;
-    m.add_function(wrap_pyfunction!(device::get_current_device, m)?)?;
-
-    // 常量
-    m.add("float32", ndrs::dtype::DTYPE_FLOAT32)?;
-    m.add("int32", ndrs::dtype::DTYPE_INT32)?;
+    // 注册 tensor 模块
+    tensor::register(m)?;
 
     Ok(())
 }

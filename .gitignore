@@ -1,1 +1,15 @@
 /target
+Cargo.lock
+/kernel/build
+/target/
+/ndrs/target/
+**/*.o
+**/*.a
+*.txt
+*.pyc
+*.so
+*.sh
+*.o
+*.d
+*.a
+__pycache__

@@ -1,6 +1,6 @@
 use crate::tensor::PyTensor;
 use crate::utils::flatten_list_f32;
-use ndrs::{ArcTensorView, Device, Tensor, TensorViewOps, DTYPE_INT32, DTYPE_FLOAT32};
+use ndrs::{ArcTensorView, Device, Tensor, TensorViewOps, DTYPE_FLOAT32, DTYPE_INT32};
 use numpy::{PyArray, PyArrayDyn};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -94,7 +94,7 @@ pub fn tensor_numpy_impl(view: &ArcTensorView, py: Python) -> PyResult<Py<PyAny>
     view.contiguous(&mut out_view)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
     let tensor_contig = out_view.into_handle();
-    let tensor_contig_ref = tensor_contig.lock().unwrap();
+    let tensor_contig_ref = tensor_contig.0.lock().unwrap();
     let bytes = tensor_contig_ref
         .as_bytes()
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Cannot get bytes"))?;
@@ -127,8 +127,8 @@ pub fn tensor_numpy_impl(view: &ArcTensorView, py: Python) -> PyResult<Py<PyAny>
 
 pub fn tensor_to_impl(view: &ArcTensorView, device: &str) -> PyResult<PyTensor> {
     let target = match device {
-        "cpu" => Device::CPU,
-        "cuda" => Device::GPU(0),
+        "cpu" => Device::Cpu,
+        "cuda" => Device::Cuda(0),
         _ => return Err(pyo3::exceptions::PyValueError::new_err("Unknown device")),
     };
     let elem_size = ndrs::dtype::get_dtype_info(view.dtype()).unwrap().size;

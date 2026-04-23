@@ -1,5 +1,4 @@
 use super::*;
-use crate::device::{CudaContextWrapper, Device};
 use crate::dtype::{get_dtype_info, DType};
 use crate::tensor::Tensor;
 use cudarc::driver::CudaStream;
@@ -12,9 +11,6 @@ impl Tensor {
     }
     pub(crate) fn data_mut_ptr(&mut self, stream: Option<&Arc<CudaStream>>) -> *mut u8 {
         self.data.as_mut_ptr(stream)
-    }
-    pub(crate) fn cuda_ctx_ref(&self) -> Option<&Arc<CudaContextWrapper>> {
-        self.cuda_ctx.as_ref()
     }
 
     // ---------- 公开获取器 ----------

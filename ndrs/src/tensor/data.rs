@@ -1,7 +1,7 @@
 use cudarc::driver::{CudaSlice, CudaStream, DevicePtr, DevicePtrMut};
-use std::sync::Arc;   // 添加
+use std::sync::Arc; // 添加
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum DataPtr {
     Cpu(Box<[u8]>),
     Gpu(CudaSlice<u8>),

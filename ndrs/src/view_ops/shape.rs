@@ -2,7 +2,7 @@
 
 #[macro_export]
 macro_rules! impl_broadcast_to {
-    ($view_type:ident, $borrow:ident, $borrow_mut:ident, $into_handle:expr) => {
+    ($view_type:ident, $lock:ident, $into_handle:expr) => {
         fn broadcast_to(&self, target_shape: &[usize]) -> Result<Self, String> {
             if self.shape.len() > target_shape.len() {
                 return Err("Cannot broadcast to fewer dimensions".into());
@@ -30,7 +30,7 @@ macro_rules! impl_broadcast_to {
 
 #[macro_export]
 macro_rules! impl_transpose {
-    ($view_type:ident, $borrow:ident, $borrow_mut:ident, $into_handle:expr) => {
+    ($view_type:ident, $lock:ident, $into_handle:expr) => {
         fn transpose(&self, axes: &[usize]) -> Result<Self, String> {
             if axes.len() != self.shape.len() {
                 return Err("Axes length mismatch".into());
@@ -53,7 +53,7 @@ macro_rules! impl_transpose {
 
 #[macro_export]
 macro_rules! impl_slice {
-    ($view_type:ident, $borrow:ident, $borrow_mut:ident, $into_handle:expr) => {
+    ($view_type:ident, $lock:ident, $into_handle:expr) => {
         fn slice(&self, info: &$crate::view::SliceInfo) -> Result<Self, String> {
             let slices = info.args();
             let mut new_offset = self.offset;
@@ -66,21 +66,67 @@ macro_rules! impl_slice {
                 let dim_size = self.shape[dim];
                 let dim_stride = self.strides[dim];
                 match slice {
-                    $crate::view::SliceArg::Index(idx) => {
-                        if *idx >= dim_size {
+                    SliceArg::Index(idx) => {
+                        let idx = if *idx >= 0 {
+                            *idx as usize
+                        } else {
+                            (dim_size as i32 + idx) as usize
+                        };
+                        if idx >= dim_size {
                             return Err("Index out of bounds".into());
                         }
                         new_offset += idx * dim_stride;
                     }
-                    $crate::view::SliceArg::Range(start, end, step) => {
-                        let start = *start;
-                        let end = if *end == usize::MAX { dim_size } else { *end };
+                    SliceArg::Range(start, end, step) => {
+                        let start = if *start >= 0 {
+                            *start as usize
+                        } else {
+                            (dim_size as i32 + start) as usize
+                        };
+                        let end = if *end >= 0 {
+                            *end as usize
+                        } else {
+                            (dim_size as i32 + end) as usize
+                        };
                         if start >= end || start >= dim_size {
                             return Err("Range out of bounds".into());
                         }
-                        let len = (end - start + *step - 1) / *step;
+                        let len = (end - start + (*step as usize) - 1) / (*step as usize);
                         new_shape.push(len);
                         new_strides.push(dim_stride * (*step as usize));
+                        new_offset += start * dim_stride;
+                    }
+                    SliceArg::RangeInclusive(start, end) => {
+                        let start = if *start >= 0 {
+                            *start as usize
+                        } else {
+                            (dim_size as i32 + start) as usize
+                        };
+                        let end = if *end >= 0 {
+                            *end as usize
+                        } else {
+                            (dim_size as i32 + end) as usize
+                        };
+                        if start > end || start >= dim_size {
+                            return Err("RangeInclusive out of bounds".into());
+                        }
+                        let len = end - start + 1;
+                        new_shape.push(len);
+                        new_strides.push(dim_stride);
+                        new_offset += start * dim_stride;
+                    }
+                    SliceArg::From(start) => {
+                        let start = if *start >= 0 {
+                            *start as usize
+                        } else {
+                            (dim_size as i32 + start) as usize
+                        };
+                        if start >= dim_size {
+                            return Err("From out of bounds".into());
+                        }
+                        let len = dim_size - start;
+                        new_shape.push(len);
+                        new_strides.push(dim_stride);
                         new_offset += start * dim_stride;
                     }
                     $crate::view::SliceArg::All => {
@@ -100,7 +146,7 @@ macro_rules! impl_slice {
 
 #[macro_export]
 macro_rules! impl_concat_split {
-    ($view_type:ident, $borrow:ident, $borrow_mut:ident, $into_handle:expr) => {
+    ($view_type:ident, $lock:ident, $into_handle:expr) => {
         fn concat_with_out(views: &[&Self], axis: usize, out: &mut Self) -> Result<(), String> {
             if views.is_empty() {
                 return Err("No views to concatenate".into());
@@ -129,7 +175,8 @@ macro_rules! impl_concat_split {
             for view in views {
                 let slice_len = view.shape()[axis];
                 let mut slices = vec![$crate::view::SliceArg::All; first_shape.len()];
-                slices[axis] = $crate::view::SliceArg::Range(offset, offset + slice_len, 1);
+                slices[axis] =
+                    $crate::view::SliceArg::Range(offset as i32, (offset + slice_len) as i32, 1);
                 let mut out_slice = out.slice(&$crate::view::SliceInfo::new(slices))?;
                 out_slice.assign(view)?;
                 offset += slice_len;
@@ -162,7 +209,8 @@ macro_rules! impl_concat_split {
                     return Err(format!("Output view {} shape mismatch", i));
                 }
                 let mut slices = vec![$crate::view::SliceArg::All; self.shape().len()];
-                slices[axis] = $crate::view::SliceArg::Range(offset, offset + size, 1);
+                slices[axis] =
+                    $crate::view::SliceArg::Range(offset as i32, (offset + size) as i32, 1);
                 let src_slice = self.slice(&$crate::view::SliceInfo::new(slices))?;
                 out_view.assign(&src_slice)?; // 修正方向
                 offset += size;
@@ -204,8 +252,8 @@ macro_rules! impl_concat_split {
 
 #[cfg(test)]
 mod tests {
+    use crate::view::{arc_view_to_vec_f32, rc_view_to_vec_f32};
     use crate::*;
-    use ndrs_macros::s;
 
     #[test]
     fn test_rc_assign() {

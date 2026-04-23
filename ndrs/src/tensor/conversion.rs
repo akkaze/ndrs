@@ -1,7 +1,8 @@
 use super::*;
-use crate::dtype::{DTypeMapping, get_dtype_info};
+use crate::dtype::{get_dtype_info, DTypeMapping};
 use crate::tensor::{DataPtr, Tensor};
 use bytemuck::Pod;
+use parking_lot::ReentrantMutex;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -44,10 +45,19 @@ impl Tensor {
     }
 
     // ---------- 所有权转换 ----------
-    pub fn into_rc(self) -> Rc<RefCell<Self>> {
+    pub fn into_rc(self) -> RcTensor {
+        RcTensor(Rc::new(RefCell::new(self)))
+    }
+    pub fn into_arc(self) -> ArcTensor {
+        ArcTensor(Arc::new(ReentrantMutex::new(RefCell::new(self))))
+    }
+
+    // 内部使用：返回原始句柄
+    pub(crate) fn into_rc_raw(self) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(self))
     }
-    pub fn into_arc(self) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(self))
+
+    pub(crate) fn into_arc_raw(self) -> Arc<ReentrantMutex<RefCell<Tensor>>> {
+        Arc::new(ReentrantMutex::new(RefCell::new(self)))
     }
 }

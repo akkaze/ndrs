@@ -2,7 +2,7 @@
 
 #[macro_export]
 macro_rules! impl_matmul_with_out {
-    ($view_type:ident, $borrow:ident, $borrow_mut:ident, $into_handle:expr) => {
+    ($view_type:ident, $lock:ident, $into_handle:expr) => {
         fn matmul_with_out(&self, other: &Self, out: &mut Self) -> Result<(), String> {
             let shape_self = self.shape();
             let shape_other = other.shape();
@@ -18,9 +18,12 @@ macro_rules! impl_matmul_with_out {
             if shape_out != &[m, n] {
                 return Err("Output shape must be [M, N]".into());
             }
-            let a_t = $borrow(&self.handle);
-            let b_t = $borrow(&other.handle);
-            let mut c_t = $borrow_mut(&out.handle);
+            let a_cell = $lock(&self.handle);
+            let a_t = a_cell.borrow();
+            let b_cell = $lock(&other.handle);
+            let b_t = b_cell.borrow();
+            let c_cell = $lock(&out.handle);
+            let mut c_t = c_cell.borrow_mut();
             if a_t.dtype() != b_t.dtype() || a_t.dtype() != c_t.dtype() {
                 return Err("Dtype mismatch".into());
             }
@@ -40,7 +43,7 @@ macro_rules! impl_matmul_with_out {
             let b_ptr = b_t.data_ptr(None);
             let c_ptr = c_t.data_mut_ptr(None);
             match a_t.device() {
-                $crate::device::Device::CPU => unsafe {
+                $crate::device::Device::Cpu => unsafe {
                     $crate::kernel::cpu_matmul_strided_f32(
                         a_ptr as *const f32,
                         a_stride_row,
@@ -56,10 +59,9 @@ macro_rules! impl_matmul_with_out {
                         k1 as i32,
                     );
                 },
-                $crate::device::Device::GPU(_) => {
-                    let ctx = a_t.cuda_ctx_ref().unwrap();
-                    let stream = &ctx.stream;
-                    let stream_ptr = ctx.stream_ptr();
+                $crate::device::Device::Cuda(_) => {
+                    let stream = cuda::get_stream().map_err(|e| e.to_string())?;
+                    let stream_ptr = stream.as_ptr();
                     unsafe {
                         let err = $crate::kernel::gpu_matmul_strided_f32(
                             a_ptr as *const f32,
@@ -80,7 +82,6 @@ macro_rules! impl_matmul_with_out {
                             return Err(format!("GPU matmul failed with error {}", err));
                         }
                     }
-                    stream.synchronize().map_err(|e| e.to_string())?;
                 }
             }
             Ok(())
@@ -90,7 +91,7 @@ macro_rules! impl_matmul_with_out {
 
 #[macro_export]
 macro_rules! impl_matmul {
-    ($view_type:ident, $borrow:ident, $borrow_mut:ident, $into_handle:expr) => {
+    ($view_type:ident, $lock:ident, $into_handle:expr) => {
         fn matmul(&self, other: &Self) -> Result<Self, String> {
             let m = self.shape()[0];
             let n = other.shape()[1];
@@ -104,8 +105,8 @@ macro_rules! impl_matmul {
 
 #[cfg(test)]
 mod tests {
+    use crate::view::rc_view_to_vec_f32;
     use crate::*;
-    use ndrs_macros::s;
 
     #[test]
     fn test_matmul() {

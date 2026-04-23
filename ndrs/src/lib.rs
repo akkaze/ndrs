@@ -1,19 +1,30 @@
+pub mod backend;
 pub mod device;
 pub mod dtype;
 pub mod kernel;
+pub mod macros;
 pub mod stream;
 pub mod tensor;
 pub mod view;
 pub mod view_ops;
 
-// 重新导出主要类型
-pub use device::{CudaContextWrapper as CudaContext, Device};
-pub use dtype::{
-    get_add_op, get_dtype_info, register_add_op, register_dtype, DType, DTypeMapping,
-    DTYPE_FLOAT32, DTYPE_INT32,
-};
-pub use stream::{Event, Stream};
+pub use backend::cpu;
+pub use backend::cuda;
+
+// 统一设备/流 API
+pub use device::Device;
+
+// 其他导出保持不变
+pub use dtype::{DType, DTYPE_FLOAT32, DTYPE_INT32};
 pub use tensor::Tensor;
-pub use view::{broadcast_shapes, ArcTensorView, AsView, RcTensorView, SliceArg, SliceInfo, TensorViewOps};
-pub use ndrs_macros::s;
-pub use view::{rc_view_to_vec_f32, arc_view_to_vec_f32};
+pub use view::{broadcast_shapes, ArcTensorView, RcTensorView, SliceInfo, TensorViewOps};
+
+#[cfg(test)]
+mod test_init {
+    use ctor::ctor;
+
+    #[ctor]
+    fn init_logger() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+}
