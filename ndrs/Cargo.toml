@@ -1,6 +1,6 @@
 [package]
 name = "ndrs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "A tensor library with GPU support"
 license = "MIT OR Apache-2.0"
@@ -14,6 +14,8 @@ once_cell = "1.19"
 thiserror = "1.0"
 bytemuck = { version = "1.14", features = ["derive"] }
 parking_lot = { version = "0.12", features = ["deadlock_detection"] }
+npyz = "0.9"
+tempfile = "3"
 threadpool = "1.8"
 num_cpus = "1.16"
 env_logger = "0.11"

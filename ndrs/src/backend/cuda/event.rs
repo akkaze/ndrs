@@ -26,6 +26,8 @@ impl Event {
             .event
             .elapsed_ms(&earlier.event)
             .map_err(|e| e.to_string())?;
-        Ok(Duration::from_secs_f64(ms as f64 / 1000.0))
+        let ms_abs = ms.abs();
+        let secs = ms_abs as f64 / 1000.0;
+        Ok(Duration::from_secs_f64(secs))
     }
 }

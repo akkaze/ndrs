@@ -295,4 +295,62 @@ mod tests {
         let result = arc_view_to_vec_f32(&out_gpu);
         assert_eq!(result, vec![6.0, 8.0, 10.0, 12.0]);
     }
+
+    #[test]
+    fn test_direct_add_and_add_assign() {
+        use crate::s;
+        use crate::view::{arc_view_to_vec_f32, rc_view_to_vec_f32};
+
+        // 1. RcTensorView: Add
+        let a = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b = Tensor::new_cpu_from_f32(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2]);
+        let a_view = a.into_rc().as_view();
+        let b_view = b.into_rc().as_view();
+        let c_view = a_view + b_view;
+        assert_eq!(rc_view_to_vec_f32(&c_view), vec![6.0, 8.0, 10.0, 12.0]);
+
+        // 2. RcTensorView: AddAssign
+        let mut a2 = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b2 = Tensor::new_cpu_from_f32(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2]);
+        let mut a2_view = a2.into_rc().as_view();
+        let b2_view = b2.into_rc().as_view();
+        a2_view += b2_view;
+        assert_eq!(rc_view_to_vec_f32(&a2_view), vec![6.0, 8.0, 10.0, 12.0]);
+
+        // 3. ArcTensorView: Add
+        let a3 = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b3 = Tensor::new_cpu_from_f32(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2]);
+        let a3_view = a3.into_arc().as_view();
+        let b3_view = b3.into_arc().as_view();
+        let c3_view = a3_view + b3_view;
+        assert_eq!(arc_view_to_vec_f32(&c3_view), vec![6.0, 8.0, 10.0, 12.0]);
+
+        // 4. ArcTensorView: AddAssign
+        let mut a4 = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b4 = Tensor::new_cpu_from_f32(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2]);
+        let mut a4_view = a4.into_arc().as_view();
+        let b4_view = b4.into_arc().as_view();
+        a4_view += b4_view;
+        assert_eq!(arc_view_to_vec_f32(&a4_view), vec![6.0, 8.0, 10.0, 12.0]);
+
+        // 5. 广播加法
+        let a5 = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0], vec![3, 1]);
+        let b5 = Tensor::new_cpu_from_f32(vec![4.0, 5.0, 6.0, 7.0], vec![1, 4]);
+        let a5_view = a5.into_rc().as_view();
+        let b5_view = b5.into_rc().as_view();
+        let c5_view = a5_view + b5_view;
+        let expected: Vec<f32> = (0..3)
+            .flat_map(|i| (0..4).map(move |j| (i + 1) as f32 + (j + 4) as f32))
+            .collect();
+        assert_eq!(rc_view_to_vec_f32(&c5_view), expected);
+
+        // 6. 切片上的 AddAssign
+        let mut a6 = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b6 = Tensor::new_cpu_from_f32(vec![10.0, 20.0], vec![1, 2]);
+        let mut a6_view = a6.into_rc().as_view();
+        let b6_view = b6.into_rc().as_view();
+        let mut sub = a6_view.slice(&s![0..1, ..]).unwrap();
+        sub += b6_view;
+        assert_eq!(rc_view_to_vec_f32(&a6_view), vec![11.0, 22.0, 3.0, 4.0]);
+    }
 }

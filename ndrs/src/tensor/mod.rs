@@ -6,6 +6,7 @@ mod construction;
 mod conversion;
 mod data;
 mod handle_ops;
+mod io;
 
 // 不再重新导出 DataPtr
 use crate::Device;
@@ -14,6 +15,7 @@ pub use construction::*;
 pub use conversion::*;
 pub use data::*;
 pub use handle_ops::{ArcTensor, RcTensor};
+pub use io::{load_npy, save_npy};
 
 #[derive(Debug)]
 pub struct Tensor {

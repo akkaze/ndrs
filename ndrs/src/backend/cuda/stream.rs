@@ -1,5 +1,6 @@
 use super::device::{get_device, get_device_context};
 use super::event::Event;
+use cudarc::driver::sys::CUevent_flags;
 use cudarc::driver::CudaStream;
 use std::sync::Arc;
 
@@ -29,7 +30,8 @@ impl Stream {
     }
 
     pub fn record(&self) -> Result<Event, String> {
-        let flags = None;
+        let flags = Some(CUevent_flags::CU_EVENT_DEFAULT);
+        // 直接记录事件，即使流句柄为 0 也是允许的（默认流）
         let event = self.stream.record_event(flags).map_err(|e| e.to_string())?;
         Ok(Event { event })
     }
@@ -51,12 +53,12 @@ pub fn default_stream() -> Result<Stream, String> {
     let dev_id = get_device();
     let ctx = get_device_context(dev_id)?;
     let stream = ctx.default_stream();
+    // 默认流句柄可以是 0，是合法值，无需断言
     Ok(Stream {
         stream,
         device_id: dev_id,
     })
 }
-
 thread_local! {
     static CURRENT_STREAM: std::cell::RefCell<Option<Stream>> = const { std::cell::RefCell::new(None) };
 }

@@ -367,4 +367,87 @@ mod tests {
         let result = ArcTensorView::add(&a_gpu, &b_gpu, &mut out_gpu);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_event_timing_and_wait() {
+        if !cuda::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+        cuda::set_device(0).unwrap();
+
+        let stream1 = cuda::Stream::new(Some(0)).unwrap();
+        let stream2 = cuda::Stream::new(Some(0)).unwrap();
+
+        let size = 1024 * 1024;
+        let shape = vec![1024, 1024];
+
+        // 在 stream1 上执行加法
+        cuda::set_stream(stream1.clone()).unwrap();
+        let a = Tensor::new_cpu_from_f32(vec![1.0; size], shape.clone());
+        let b = Tensor::new_cpu_from_f32(vec![2.0; size], shape.clone());
+        let a_gpu = a.into_arc().as_view().to_gpu(0).unwrap();
+        let b_gpu = b.into_arc().as_view().to_gpu(0).unwrap();
+        let mut out1 = Tensor::new_contiguous(shape.clone(), DTYPE_FLOAT32)
+            .unwrap()
+            .into_arc()
+            .as_view()
+            .to_gpu(0)
+            .unwrap();
+        ArcTensorView::add(&a_gpu, &b_gpu, &mut out1).unwrap();
+
+        // 在 stream1 上记录事件
+        let event = stream1.record().unwrap();
+
+        // 切换到 stream2，等待事件后执行加法
+        cuda::set_stream(stream2.clone()).unwrap();
+        stream2.wait_event(&event).unwrap();
+
+        let mut out2 = Tensor::new_contiguous(shape, DTYPE_FLOAT32)
+            .unwrap()
+            .into_arc()
+            .as_view()
+            .to_gpu(0)
+            .unwrap();
+        ArcTensorView::add(&out1, &out1, &mut out2).unwrap();
+
+        stream2.synchronize().unwrap();
+
+        let result = arc_view_to_vec_f32(&out2);
+        let expected: Vec<f32> = vec![6.0; size];
+        assert_eq!(result, expected);
+    }
+    #[test]
+    fn test_event_elapsed_custom_stream() {
+        if !cuda::is_available() {
+            return;
+        }
+        cuda::set_device(0).unwrap();
+        let stream = cuda::Stream::new(Some(0)).unwrap();
+        cuda::set_stream(stream.clone()).unwrap();
+
+        let a = Tensor::new_cpu_from_f32(vec![1.0; 1024 * 1024], vec![1024, 1024])
+            .into_arc()
+            .as_view()
+            .to_gpu(0)
+            .unwrap();
+        let b = Tensor::new_cpu_from_f32(vec![2.0; 1024 * 1024], vec![1024, 1024])
+            .into_arc()
+            .as_view()
+            .to_gpu(0)
+            .unwrap();
+        let mut out = Tensor::new_cpu_from_f32(vec![0.0; 1024 * 1024], vec![1024, 1024])
+            .into_arc()
+            .as_view()
+            .to_gpu(0)
+            .unwrap();
+
+        let start = stream.record().unwrap();
+        ArcTensorView::add(&a, &b, &mut out).unwrap();
+        let end = stream.record().unwrap();
+        stream.synchronize().unwrap();
+
+        let elapsed = end.elapsed_since(&start).unwrap();
+        println!("Elapsed: {:?}", elapsed);
+    }
 }

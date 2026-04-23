@@ -51,6 +51,7 @@ pub struct DeviceContext {
 impl DeviceContext {
     pub fn new(device_id: usize) -> Result<Self, DriverError> {
         let ctx = CudaContext::new(device_id)?;
+        ctx.bind_to_thread()?;   // 直接传播 DriverError
         Ok(DeviceContext { ctx, device_id })
     }
 
