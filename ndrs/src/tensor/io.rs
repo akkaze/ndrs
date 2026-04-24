@@ -13,7 +13,7 @@ use crate::dtype::{DTYPE_FLOAT32, DTYPE_INT32};
 use crate::tensor::{RcTensor, Tensor};
 
 /// Load a Tensor from a .npy file.
-pub fn load_npy<P: AsRef<Path>>(path: P) -> Result<RcTensor, String> {
+pub fn load_npy<P: AsRef<Path>>(path: P) -> Result<Tensor, String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     let reader = BufReader::new(file);
     let npy = NpyFile::new(reader).map_err(|e| format!("Failed to read npy: {}", e))?;
@@ -29,39 +29,37 @@ pub fn load_npy<P: AsRef<Path>>(path: P) -> Result<RcTensor, String> {
         let data: Vec<f32> = npy
             .into_vec()
             .map_err(|e| format!("Failed to read f32: {}", e))?;
-        Tensor::from_vec(data, shape)
-            .map(|t| t.into_rc())
-            .map_err(|e| e.to_string())
+        Tensor::from_vec(data, shape).map_err(|e| e.to_string())
     } else if dtype_str == "<i4" || dtype_str == ">i4" || dtype_str == "|i4" {
         let data: Vec<i32> = npy
             .into_vec()
             .map_err(|e| format!("Failed to read i32: {}", e))?;
-        Tensor::from_vec(data, shape)
-            .map(|t| t.into_rc())
-            .map_err(|e| e.to_string())
+        Tensor::from_vec(data, shape).map_err(|e| e.to_string())
     } else {
         Err(format!("Unsupported dtype: {}", dtype_str))
     }
 }
 
 /// Save a Tensor to a .npy file. The tensor must be on CPU and contiguous.
-pub fn save_npy<P: AsRef<Path>>(tensor: &RcTensor, path: P) -> Result<(), String> {
-    let t = tensor.0.borrow();
-    if t.device() != Device::Cpu {
+pub fn save_npy<P: AsRef<Path>>(tensor: &Tensor, path: P) -> Result<(), String> {
+    if tensor.device() != Device::Cpu {
         return Err("save_npy only supports CPU tensors".into());
     }
-    if !t.is_contiguous() {
+    if !tensor.is_contiguous() {
         return Err("save_npy requires contiguous tensor".into());
     }
 
-    let shape: Vec<u64> = t.shape().iter().map(|&d| d as u64).collect();
+    let shape: Vec<u64> = tensor.shape().iter().map(|&d| d as u64).collect();
     let file = File::create(path).map_err(|e| e.to_string())?;
     let writer = BufWriter::new(file);
 
-    match t.dtype() {
+    match tensor.dtype() {
         DTYPE_FLOAT32 => {
             let slice = unsafe {
-                std::slice::from_raw_parts(t.as_bytes().unwrap().as_ptr() as *const f32, t.size())
+                std::slice::from_raw_parts(
+                    tensor.as_bytes().unwrap().as_ptr() as *const f32,
+                    tensor.size(),
+                )
             };
             let type_str =
                 TypeStr::from_str("<f4").map_err(|e| format!("Invalid type string: {}", e))?;
@@ -79,7 +77,10 @@ pub fn save_npy<P: AsRef<Path>>(tensor: &RcTensor, path: P) -> Result<(), String
         }
         DTYPE_INT32 => {
             let slice = unsafe {
-                std::slice::from_raw_parts(t.as_bytes().unwrap().as_ptr() as *const i32, t.size())
+                std::slice::from_raw_parts(
+                    tensor.as_bytes().unwrap().as_ptr() as *const i32,
+                    tensor.size(),
+                )
             };
             let type_str =
                 TypeStr::from_str("<i4").map_err(|e| format!("Invalid type string: {}", e))?;
@@ -95,7 +96,7 @@ pub fn save_npy<P: AsRef<Path>>(tensor: &RcTensor, path: P) -> Result<(), String
             w.finish()
                 .map_err(|e| format!("Failed to finalize: {}", e))?;
         }
-        _ => return Err(format!("Unsupported dtype: {}", t.dtype())),
+        _ => return Err(format!("Unsupported dtype: {}", tensor.dtype())),
     }
     Ok(())
 }
@@ -103,37 +104,34 @@ pub fn save_npy<P: AsRef<Path>>(tensor: &RcTensor, path: P) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::TensorViewOps;
-    use crate::{s, tensor, DTYPE_FLOAT32, DTYPE_INT32};
+    use crate::{tensor, DTYPE_FLOAT32, DTYPE_INT32};
     use tempfile::NamedTempFile;
 
     #[test]
     fn test_npy_roundtrip_f32() {
-        let tensor = tensor!([[1.0, 2.0], [3.0, 4.0]]).into_rc();
+        let tensor = tensor!([[1.0, 2.0], [3.0, 4.0]]);
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
 
         save_npy(&tensor, path).unwrap();
         let loaded = load_npy(path).unwrap();
 
-        let loaded_t = loaded.0.borrow();
-        assert_eq!(loaded_t.shape(), &[2, 2]);
-        assert_eq!(loaded_t.dtype(), DTYPE_FLOAT32);
-        assert_eq!(loaded_t.to_vec::<f32>().unwrap(), vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(loaded.shape(), &[2, 2]);
+        assert_eq!(loaded.dtype(), DTYPE_FLOAT32);
+        assert_eq!(loaded.to_vec::<f32>().unwrap(), vec![1.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]
     fn test_npy_roundtrip_i32() {
-        let tensor = tensor!([[-1, 2], [3, -4]]).into_rc();
+        let tensor = tensor!([[-1, 2], [3, -4]]);
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
 
         save_npy(&tensor, path).unwrap();
         let loaded = load_npy(path).unwrap();
 
-        let loaded_t = loaded.0.borrow();
-        assert_eq!(loaded_t.shape(), &[2, 2]);
-        assert_eq!(loaded_t.dtype(), DTYPE_INT32);
-        assert_eq!(loaded_t.to_vec::<i32>().unwrap(), vec![-1, 2, 3, -4]);
+        assert_eq!(loaded.shape(), &[2, 2]);
+        assert_eq!(loaded.dtype(), DTYPE_INT32);
+        assert_eq!(loaded.to_vec::<i32>().unwrap(), vec![-1, 2, 3, -4]);
     }
 }

@@ -1,8 +1,8 @@
+use find_cuda_helper::find_cuda_root;
 use std::env;
 use std::path::PathBuf;
 #[cfg(target_env = "msvc")]
 use vcvars::Vcvars;
-use find_cuda_helper::find_cuda_root;
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -22,8 +22,14 @@ fn main() {
         eprintln!("cargo:warning=CUDA feature enabled but CUDA toolkit not found. Falling back to CPU-only mode.");
     }
 
-    println!("cargo:rerun-if-changed={}", kernel_dir.join("src").display());
-    println!("cargo:rerun-if-changed={}", kernel_dir.join("include").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        kernel_dir.join("src").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        kernel_dir.join("include").display()
+    );
 
     // ---------- 获取 MSVC 环境变量（仅 Windows MSVC）----------
     #[cfg(target_env = "msvc")]
@@ -102,7 +108,7 @@ fn main() {
         let mut cuda_builder = KernelBuilder::new()
             .source_files(vec![cuda_file])
             .include_path(cuda_include)
-            .cuda_root(&cuda_root)           // 显式指定 CUDA 根目录
+            .cuda_root(&cuda_root) // 显式指定 CUDA 根目录
             .arg("-O3")
             .arg("-std=c++17")
             .arg("--use_fast_math");
