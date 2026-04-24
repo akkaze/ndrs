@@ -6,20 +6,17 @@ build-backend = "maturin"
 name = "ndrs"
 version = "0.1.0"
 description = "A Rust-based tensor library with CPU/CUDA support"
-authors = [{ name = "Your Name", email = "you@example.com" }]
+authors = [{ name = "anchor", email = "you@example.com" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.8"
 
 [tool.maturin]
-python-source = "python"
-manifest-path = "python/Cargo.toml"
+python-source = "ndrs-python"
+manifest-path = "ndrs-python/Cargo.toml"
 module-name = "ndrs._ndrs"
 features = ["pyo3/extension-module"]
-include = ["python/ndrs/libndrs_kernel.so"]
+include = ["ndrs-python/ndrs/libndrs_kernel.so"]
 
 [package.metadata.maturin]
-include = [
-    "ndrs/_ndrs.so",
-    "ndrs/libndrs_kernel.so"
-]
+include = ["ndrs/_ndrs.so"]

@@ -24,8 +24,10 @@ ctor = "0.2"
 
 [build-dependencies]
 walkdir = "2"
+vcvars = "0.1.6"
 cc = "1.0"
-cudaforge = "0.1"   # 用于编译 CUDA 代码
+find_cuda_helper = "0.2.0"
+cudaforge = "0.1"
 
 [features]
 default = ["cuda"]

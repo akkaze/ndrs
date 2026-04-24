@@ -136,12 +136,12 @@ impl Tensor {
         }
     }
 
-        pub fn from_string_literal(s: &str) -> Result<Self, String> {
+    pub fn from_string_literal(s: &str) -> Result<Self, String> {
         let s = s.trim();
         // 分离数据部分和可选的类型后缀
         let (data_str, dtype_hint) = if let Some(semi_pos) = s.rfind(';') {
             let data = s[..semi_pos].trim();
-            let suffix = s[semi_pos+1..].trim();
+            let suffix = s[semi_pos + 1..].trim();
             (data, Some(suffix))
         } else {
             (s, None)
@@ -160,7 +160,7 @@ impl Tensor {
         }
         // 去除最外层括号
         let inner = if s.starts_with('[') && s.ends_with(']') {
-            &s[1..s.len()-1]
+            &s[1..s.len() - 1]
         } else {
             // 标量：没有括号
             return Ok((vec![s], vec![]));
@@ -195,7 +195,8 @@ impl Tensor {
         // 递归解析每个元素
         let mut all_strings = Vec::new();
         let mut child_shapes = Vec::new();
-        for elem in &elements {  // 关键修改：使用引用避免移动
+        for elem in &elements {
+            // 关键修改：使用引用避免移动
             let (strings, shape) = Self::parse_nested_array(elem)?;
             all_strings.extend(strings);
             child_shapes.push(shape);

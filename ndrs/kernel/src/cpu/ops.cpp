@@ -1,6 +1,14 @@
 #include "kernel_interface.h"
 #include <omp.h>
 #include <cstring>
+#include <cstdint>
+
+#ifdef _MSC_VER
+    #define OMP_COLLAPSE(x)
+    #define OMP_FOR_SIGNED
+#else
+    #define OMP_COLLAPSE(x) collapse(x)
+#endif
 
 template<typename T>
 struct add_op { T operator()(T x, T y) const { return x + y; } };
@@ -18,7 +26,7 @@ void cpu_strided_binary(const T* a, const size_t* a_strides,
                         const size_t* shape, int ndim,
                         size_t total_elements, Op op) {
     #pragma omp parallel for
-    for (size_t idx = 0; idx < total_elements; ++idx) {
+    for (int64_t idx = 0; idx < total_elements; ++idx) {
         size_t a_off = 0, b_off = 0, c_off = 0;
         size_t temp = idx;
         for (int d = ndim - 1; d >= 0; --d) {
@@ -63,7 +71,7 @@ void cpu_strided_copy(const uint8_t* src, size_t src_offset,
                       const size_t* dst_strides,
                       size_t elem_size, size_t total_elements) {
     #pragma omp parallel for
-    for (size_t idx = 0; idx < total_elements; ++idx) {
+    for (int64_t idx = 0; idx < total_elements; ++idx) {
         size_t src_off = src_offset;
         size_t dst_off = dst_offset;
         size_t temp = idx;
@@ -83,7 +91,7 @@ void cpu_contiguous(const uint8_t* src, size_t src_offset,
                     uint8_t* dst, size_t elem_size,
                     size_t total_elements) {
     #pragma omp parallel for
-    for (size_t idx = 0; idx < total_elements; ++idx) {
+    for (int64_t idx = 0; idx < total_elements; ++idx) {
         size_t src_off = src_offset;
         size_t temp = idx;
         for (int d = ndim - 1; d >= 0; --d) {

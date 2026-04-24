@@ -7,9 +7,7 @@ edition = "2021"
 name = "_ndrs"
 crate-type = ["cdylib"]
 
-build = "build.rs"  # 指定 build.rs
-
 [dependencies]
-pyo3 = { version = "0.28", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3"] }
 numpy = "0.28"
 ndrs = { version = "0.3.0", path = "../ndrs" }

@@ -108,9 +108,9 @@ mod tests {
         set_device as set_current_device,
     };
     use crate::s;
-    use crate::Device;
     use crate::tensor::Tensor;
     use crate::view::{arc_view_to_vec_f32, rc_view_to_vec_f32};
+    use crate::Device;
     use crate::DTYPE_FLOAT32;
 
     #[test]

@@ -4,7 +4,7 @@ mod cuda;
 mod tensor;
 
 #[pymodule]
-fn ndrs_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _ndrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // 注册 cuda 子模块
     let cuda_module = PyModule::new(m.py(), "cuda")?;
     cuda::device::register(&cuda_module)?;

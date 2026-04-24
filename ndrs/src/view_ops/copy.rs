@@ -106,9 +106,9 @@ mod tests {
     };
     use crate::s;
     use crate::tensor::Tensor;
+    use crate::view::TensorViewOps;
     use crate::view::{arc_view_to_vec_f32, rc_view_to_vec_f32};
     use crate::DTYPE_FLOAT32;
-    use crate::view::TensorViewOps;
 
     #[test]
     fn test_arc_same_device_copy() {
