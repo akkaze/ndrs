@@ -1,5 +1,5 @@
 use super::*;
-use crate::dtype::{get_dtype_info, DType};
+use crate::dtype::{DType, get_dtype_info};
 use crate::tensor::Tensor;
 use cudarc::driver::CudaStream;
 use std::sync::Arc;

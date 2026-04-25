@@ -2,7 +2,7 @@
 
 #[macro_export]
 macro_rules! impl_matmul_with_out {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn matmul_with_out(&self, other: &Self, out: &mut Self) -> Result<(), String> {
             let shape_self = self.shape();
             let shape_other = other.shape();
@@ -18,11 +18,11 @@ macro_rules! impl_matmul_with_out {
             if shape_out != &[m, n] {
                 return Err("Output shape must be [M, N]".into());
             }
-            let a_cell = $lock(&self.handle);
+            let a_cell = self.handle.lock();
             let a_t = a_cell.borrow();
-            let b_cell = $lock(&other.handle);
+            let b_cell = other.handle.lock();
             let b_t = b_cell.borrow();
-            let c_cell = $lock(&out.handle);
+            let c_cell = out.handle.lock();
             let mut c_t = c_cell.borrow_mut();
             if a_t.dtype() != b_t.dtype() || a_t.dtype() != c_t.dtype() {
                 return Err("Dtype mismatch".into());
@@ -91,12 +91,12 @@ macro_rules! impl_matmul_with_out {
 
 #[macro_export]
 macro_rules! impl_matmul {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn matmul(&self, other: &Self) -> Result<Self, String> {
             let m = self.shape()[0];
             let n = other.shape()[1];
             let out_tensor = $crate::tensor::Tensor::new_contiguous(vec![m, n], self.dtype())?;
-            let mut out_view = Self::new($into_handle(out_tensor));
+            let mut out_view = Self::new(<$handle>::from_tensor(out_tensor));
             self.matmul_with_out(other, &mut out_view)?;
             Ok(out_view)
         }

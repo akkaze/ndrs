@@ -22,16 +22,15 @@ pub fn set_device(device_id: usize) -> Result<(), String> {
 
 pub fn get_device() -> usize {
     CURRENT_CUDA_DEVICE.with(|d| {
-        if let Some(id) = *d.borrow() {
+        let mut borrowed = d.borrow_mut();
+        if let Some(id) = *borrowed {
             id
         } else {
-            let default_id = 0;
-            *d.borrow_mut() = Some(default_id);
-            default_id
+            *borrowed = Some(0);
+            0
         }
     })
 }
-
 pub fn get_device_count() -> Result<usize, String> {
     use cudarc::driver::result;
     result::init().map_err(|e| e.to_string())?;

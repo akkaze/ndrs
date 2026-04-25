@@ -1,55 +1,36 @@
 //! 为 Tensor 句柄提供运算符支持（通过新类型包装）
 
-use super::*;
+use super::Tensor;
+use super::handle::{ArcTensor, RcTensor};
 use crate::view::{ArcTensorView, AsView, RcTensorView, TensorViewOps};
-use parking_lot::ReentrantMutex;
-use std::cell::RefCell;
 use std::ops::{Add, AddAssign};
 
-/// 宏：为包装类型生成所有实现
+/// 宏：为包装类型生成所有视图相关操作
 macro_rules! impl_tensor_wrapper {
     (
         $wrapper:ident,
-        $handle:ty,
         $view:ty,
         $convert:expr
     ) => {
-        #[derive(Clone, Debug)]
-        pub struct $wrapper(pub $handle);
-
-        impl From<Tensor> for $wrapper {
-            fn from(t: Tensor) -> Self {
-                $wrapper($convert(t))
-            }
-        }
-
         impl $wrapper {
             /// 获取内部句柄的视图
             pub fn as_view(&self) -> $view {
                 <$view>::new(self.clone())
             }
 
-            /// 获取底层句柄的克隆
-            pub fn into_inner(self) -> $handle {
-                self.0
+            pub fn broadcast_to(&self, target_shape: &[usize]) -> Result<$view, String> {
+                let view = self.as_view();
+                view.broadcast_to(target_shape)
             }
 
-            pub fn broadcast_to(&self, target_shape: &[usize]) -> Result<Self, String> {
+            pub fn transpose(&self, axes: &[usize]) -> Result<$view, String> {
                 let view = self.as_view();
-                let result_view = view.broadcast_to(target_shape)?;
-                Ok(result_view.into_handle()) // 直接返回，因为 into_handle 返回 Self
+                view.transpose(axes)
             }
 
-            pub fn transpose(&self, axes: &[usize]) -> Result<Self, String> {
+            pub fn T(&self) -> Result<$view, String> {
                 let view = self.as_view();
-                let result_view = view.transpose(axes)?;
-                Ok(result_view.into_handle())
-            }
-
-            pub fn T(&self) -> Result<Self, String> {
-                let view = self.as_view();
-                let result_view = view.T()?;
-                Ok(result_view.into_handle())
+                view.T()
             }
         }
 
@@ -84,15 +65,9 @@ macro_rules! impl_tensor_wrapper {
 // 为 RcTensor 生成实现
 impl_tensor_wrapper!(
     RcTensor,
-    std::rc::Rc<std::cell::RefCell<Tensor>>,
     RcTensorView,
-    Tensor::into_rc_raw // 注意：原始转换
+    Tensor::into_rc_raw // 原始转换（用于需要原始句柄的场合，但当前未使用）
 );
 
 // 为 ArcTensor 生成实现
-impl_tensor_wrapper!(
-    ArcTensor,
-    std::sync::Arc<ReentrantMutex<RefCell<Tensor>>>,
-    ArcTensorView,
-    Tensor::into_arc_raw // 原始转换
-);
+impl_tensor_wrapper!(ArcTensor, ArcTensorView, Tensor::into_arc_raw);

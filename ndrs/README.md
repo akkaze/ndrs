@@ -1,5 +1,8 @@
 # ndrs
 
+[![English](https://img.shields.io/badge/English-README-blue)](README.md)
+[![中文](https://img.shields.io/badge/中文-README-blue)](README_zh.md)
+
 **ndrs** is a NumPy‑like tensor library for Rust, providing multi‑dimensional array (tensor) operations with **optional GPU acceleration** via CUDA. It emphasizes **zero‑copy views**, efficient strided operations, and a flexible ownership model.
 
 ---
@@ -17,9 +20,12 @@
 - **Operator overloading** – `+` and `+=` for tensors with broadcastable shapes.
 - **Python‑like slicing** – intuitive `s!` macro: `s![1..4:2, ..]`.
 - **Broadcasting** – automatic shape expansion.
-- **Custom data types** – register your own types with user‑defined addition operations.
+- **Custom data types** – register your own primitive or structured types with user‑defined addition operations.
+- **Structured dtypes** – build compound types (similar to NumPy structured arrays) with named fields.
 - **NPY file I/O** – load and save tensors from/to NumPy `.npy` files (preserving shape, supports `f32`/`i32`).
-- **Python bindings** – use ndrs from Python via PyO3 (optional).
+- **Convenient `tensor!` macro** – create tensors from nested literals with optional dtype and device specifiers.
+- **Python bindings** – use ndrs from Python via PyO3, with full support for custom dtypes and operation overriding.
+- **Override operators with custom kernels** – replace built‑in implementations (e.g., addition) with your own CPU/GPU kernels for maximum performance.
 
 ---
 
@@ -29,7 +35,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ndrs = "0.1"
+ndrs = "0.4"
 ```
 
 ### Basic CPU usage with the `tensor!` macro
@@ -39,7 +45,7 @@ use ndrs::{Tensor, s, tensor};
 
 fn main() -> Result<(), String> {
     // Create tensors using the convenient `tensor!` macro (supports negatives, floats)
-    let a = tensor!([[1, -2], [3, 4]]);      // automatically i32
+    let a = tensor!([[1, -2], [3, 4]]);      // automatically i32 on CPU
     let b = tensor!([[5, 6], [7, 8]]);       // i32, shape [2,2]
 
     // Wrap into a thread‑local shared view (Rc<RefCell<Tensor>>)
@@ -68,6 +74,18 @@ fn main() -> Result<(), String> {
 }
 ```
 
+### Creating tensors with explicit dtype and device
+
+The `tensor!` macro accepts optional `; dtype` and `; "device"` specifiers:
+
+```rust
+let t = tensor!([[1, 2], [3, 4]]);               // CPU, i32
+let t = tensor!([[1, 2], [3, 4]]; f32);         // CPU, f32
+let t = tensor!([[1, 2], [3, 4]]; "cpu");       // CPU, auto‑dtype
+let t = tensor!([[1.0, 2.0], [3.0, 4.0]]; "cuda:0");   // GPU 0, f32
+let t = tensor!([[1, 2], [3, 4]]; i32; "cuda:1");       // GPU 1, i32
+```
+
 ### GPU usage with CUDA streams
 
 ```rust
@@ -82,16 +100,17 @@ fn gpu_stream_example() -> Result<(), String> {
     let stream1 = cuda::Stream::new(Some(0))?;
     let stream2 = cuda::Stream::new(Some(0))?;
 
-    let a = tensor!([[1.0, 2.0], [3.0, 4.0]]);
-    let b = tensor!([[5.0, 6.0], [7.0, 8.0]]);
+    // Create tensors directly on GPU (optional)
+    let a = tensor!([[1.0, 2.0], [3.0, 4.0]]; f32; "cuda:0");
+    let b = tensor!([[5.0, 6.0], [7.0, 8.0]]; f32; "cuda:0");
 
-    let a_gpu = a.into_arc().as_view().to_stream(&stream1)?;
-    let b_gpu = b.into_arc().as_view().to_stream(&stream1)?;
-    let mut out_gpu = a_gpu.create_output()?;
+    let a_view = a.into_arc().as_view();
+    let b_view = b.into_arc().as_view();
+    let mut out_gpu = a_view.create_output()?;   // zeros on the same device
 
     // Record event to measure kernel time
     let start = stream1.record()?;
-    a_gpu.add(&b_gpu, &mut out_gpu)?;
+    a_view.add(&b_view, &mut out_gpu)?;
     let end = stream1.record()?;
     stream1.synchronize()?;
     let elapsed = end.elapsed_since(&start)?;
@@ -117,17 +136,17 @@ fn gpu_stream_example() -> Result<(), String> {
 use ndrs::{tensor, load_npy, save_npy};
 
 fn npy_example() -> Result<(), String> {
-    let t = tensor!([[1.0, 2.0], [3.0, 4.0]]).into_rc();
+    let t = tensor!([[1.0, 2.0], [3.0, 4.0]]);
     save_npy(&t, "example.npy")?;
     let loaded = load_npy("example.npy")?;
-    assert_eq!(loaded.0.borrow().to_vec::<f32>()?, vec![1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(loaded.to_vec::<f32>()?, vec![1.0, 2.0, 3.0, 4.0]);
     Ok(())
 }
 ```
 
-### Custom data types
+### Custom primitive data types
 
-You can register your own types and define addition for them:
+You can register your own primitive (non‑structured) types and define addition for them:
 
 ```rust
 use ndrs::{register_dtype, register_add_op, TypeInfo, DType, Device};
@@ -139,17 +158,45 @@ const DTYPE_MY_TYPE: DType = 1000;
 #[derive(Clone, Copy)]
 struct MyType { a: i32, b: i32 }
 
-fn mytype_add_op(a: *const u8, b: *const u8, c: *mut u8, n: usize, _dev: Device, _stream: Option<*mut std::ffi::c_void>) {
-    let a_slice = unsafe { std::slice::from_raw_parts(a as *const MyType, n) };
-    let b_slice = unsafe { std::slice::from_raw_parts(b as *const MyType, n) };
-    let c_slice = unsafe { std::slice::from_raw_parts_mut(c as *mut MyType, n) };
-    for i in 0..n {
-        c_slice[i] = MyType { a: a_slice[i].a + b_slice[i].a, b: a_slice[i].b + b_slice[i].b };
-    }
+fn mytype_add_op(
+    a: *const u8, a_strides: *const usize,
+    b: *const u8, b_strides: *const usize,
+    c: *mut u8, c_strides: *const usize,
+    shape: *const usize, ndim: usize, n: usize,
+    dev: Device, stream: Option<*mut std::ffi::c_void>
+) -> Result<(), String> {
+    // Implementation using strides and device discrimination
+    // ...
+    Ok(())
 }
 
+// Register
 register_dtype(DTYPE_MY_TYPE, TypeInfo { size: std::mem::size_of::<MyType>(), name: "mytype" });
 register_add_op(DTYPE_MY_TYPE, Arc::new(mytype_add_op));
+```
+
+### Custom structured dtypes (Python)
+
+In the Python bindings, you can define **structured dtypes** similar to NumPy’s structured arrays:
+
+```python
+import ndrs as nd
+import numpy as np
+
+# Define a complex dtype composed of two float32 fields
+complex_dtype = nd.dtype.from_fields([
+    ('re', nd.float32),
+    ('im', nd.float32)
+])
+
+# Create a tensor from a NumPy structured array
+data = np.array([(1.0, 2.0), (3.0, 4.0)], dtype=complex_dtype.to_numpy_dtype())
+t = nd.Tensor(data, dtype=complex_dtype)
+
+# Access fields after conversion back to NumPy
+arr = t.numpy()
+print(arr['re'])  # [1.0, 3.0]
+print(arr['im'])  # [2.0, 4.0]
 ```
 
 ---
@@ -158,6 +205,12 @@ register_add_op(DTYPE_MY_TYPE, Arc::new(mytype_add_op));
 
 ### `Tensor`
 The raw data container. It owns a contiguous byte buffer (either on CPU or GPU) and stores shape, strides, data type, and device information. **It does not implement operations directly** – use `TensorView` for that.
+
+Constructors:
+- `Tensor::new_cpu_from_slice<T>(&[T], shape)` – from slice.
+- `Tensor::new_from_bytes(bytes, shape, dtype, device)` – from raw bytes (CPU or GPU).
+- `Tensor::new_contiguous(shape, dtype)` – zero‑initialized CPU tensor.
+- `Tensor::from_string_literal(s)` – parse from a literal string (used by `tensor!`).
 
 ### `TensorView`
 A view into a `Tensor` with an optional offset, shape, and strides. All mathematical operations (addition, slicing, broadcasting, device transfer) are defined on views.
@@ -196,13 +249,13 @@ let b_bcast = b_view.broadcast_to(&target)?;
 
 - `Device::Cpu` – host memory.
 - `Device::Cuda(id)` – CUDA device with given index.
-- `set_current_device(id)` – sets the default device for context creation.
-- `get_device_count()` – returns number of CUDA‑capable devices.
-- `get_stream()` / `set_stream()` – thread‑local current CUDA stream.
+- `cuda::set_device(id)` – sets the default device for context creation.
+- `cuda::get_device_count()` – returns number of CUDA‑capable devices.
+- `cuda::get_stream()` / `cuda::set_stream()` – thread‑local current CUDA stream.
 
 ### GPU streams and events
 
-- **Streams** allow asynchronous command submission. Use `Stream::new()` to create a custom non‑default stream.
+- **Streams** allow asynchronous command submission. Use `cuda::Stream::new()` to create a custom non‑default stream.
 - **Events** record points in a stream, can be used for timing (`elapsed_since`) or cross‑stream dependencies (`wait_event`).
 
 ```rust
@@ -264,7 +317,84 @@ print(t3.numpy())   # [[2. 4.]
                     #  [6. 8.]]
 ```
 
-The Python API mirrors the Rust API: slicing, broadcasting, and arithmetic operators are supported.
+### Customizing operations from Python (overriding built‑in kernels)
+
+You may want to replace ndrs’s default implementation of a binary operation (e.g., `Add`) with your own highly optimized kernel – either for a built‑in dtype like `float32` or for a custom dtype.
+
+The `register_binary_op` function allows you to supply a Python callback that will be invoked for the given dtype, operation, and device. The callback receives raw pointers to the input and output buffers, the number of elements, a device code, and an optional stream pointer. You can use `ctypes` + `numpy` to access the data and perform the computation.
+
+For **performance‑critical** custom kernels, you can write a C/CUDA function, compile it into a shared library, then call it from Python via `ctypes`. This gives you full control over the kernel without sacrificing speed.
+
+**Example: Replace the CPU addition for `float32` with a faster (or vectorized) implementation**
+
+```python
+import ctypes
+import numpy as np
+import ndrs as nd
+
+def fast_float32_add(a_ptr, b_ptr, out_ptr, n, device_code, stream):
+    # Assume the data is contiguous (ndrs will pass contiguous tensors if you call .contiguous() first)
+    # Use numpy for SIMD-optimized addition (or call your own C library)
+    a = np.ctypeslib.as_array(ctypes.cast(a_ptr, ctypes.POINTER(ctypes.c_float)), shape=(n,))
+    b = np.ctypeslib.as_array(ctypes.cast(b_ptr, ctypes.POINTER(ctypes.c_float)), shape=(n,))
+    out = np.ctypeslib.as_array(ctypes.cast(out_ptr, ctypes.POINTER(ctypes.c_float)), shape=(n,))
+    np.add(a, b, out=out)          # NumPy’s vectorized add
+    # Optionally multiply by 2, etc.
+    return 0  # success
+
+# Override the default CPU addition for float32
+nd.register_binary_op(nd.float32, nd.BINARY_OP_ADD, "cpu", fast_float32_add)
+```
+
+**For CUDA**, you can write a `.ptx` or `.cubin` kernel, load it via `ctypes` or `cupy`, and invoke it inside the callback.
+
+### Overriding from Rust
+
+The Rust API also lets you override operations. This is useful when you want to integrate a kernel written directly in Rust (e.g., using `ndarray` or `rayon`) or a third‑party CUDA kernel.
+
+```rust
+use ndrs::{register_binary_op, BinaryOpKind, Device, BinaryOpFn, DTYPE_FLOAT32};
+use std::sync::Arc;
+
+fn my_fast_add_f32_cpu(
+    a: *const u8, a_strides: *const usize,
+    b: *const u8, b_strides: *const usize,
+    c: *mut u8, c_strides: *const usize,
+    shape: *const usize, ndim: usize, n: usize,
+    dev: Device, stream: Option<*mut std::ffi::c_void>
+) -> Result<(), String> {
+    // Your optimized implementation (e.g., using SIMD or a custom algorithm)
+    // ...
+    Ok(())
+}
+
+let op: BinaryOpFn = Arc::new(my_fast_add_f32_cpu);
+register_binary_op(DTYPE_FLOAT32, BinaryOpKind::Add, Device::Cpu, op);
+```
+
+After registration, all tensor additions using that dtype and device will route through your custom kernel.
+
+### Important notes for custom kernels
+
+- **Contiguity**: The kernel may be called with arbitrary strides. To simplify your implementation, you can first call `.contiguous()` on the tensors inside the kernel (or require the user to do so) – but this will add a copy overhead. For maximum performance, your kernel should be stride‑aware (like ndrs’s default CPU and GPU kernels).
+- **Thread safety**: The callback will be called from possibly multiple threads; it must be safe to use concurrently.
+- **Device‑specific**: You can register different kernels for CPU and CUDA, allowing you to use specialized GPU kernels while keeping a CPU fallback.
+- **Performance gains**: By overriding built‑in operations, you can integrate hand‑tuned CPU vectorization (e.g., using `avx2` intrinsics) or highly optimized CUDA kernels (e.g., using tensor cores) without waiting for ndrs to natively support them.
+
+### Python API reference
+
+| Function / Class | Description |
+|----------------|-------------|
+| `nd.Tensor(data, dtype=None, device=None)` | Create a tensor from a Python list or NumPy array. |
+| `nd.Tensor.from_numpy(array, device=None)` | Alternative constructor from a NumPy array. |
+| `tensor.shape` | Returns shape as list of ints. |
+| `tensor.dtype` | Returns dtype id (int) or `DType` object for custom dtypes. |
+| `tensor.device` | Returns device string (e.g., `"cpu"`, `"cuda:0"`). |
+| `tensor.numpy()` | Returns a NumPy array (copy). |
+| `tensor.to(device)` | Moves tensor to another device (returns new tensor). |
+| `nd.dtype.from_fields(fields)` | Create a custom structured dtype. `fields` is a list of `(name, dtype_id)`. |
+| `nd.register_dtype(name, itemsize)` | Register a plain (non‑structured) dtype, returns dtype id. |
+| `nd.register_binary_op(dtype, kind, device, callback)` | Register a binary operation callback for a specific dtype and device. `kind` is one of `nd.BINARY_OP_ADD`, `nd.BINARY_OP_SUB`, … |
 
 ---
 
@@ -293,4 +423,3 @@ Contributions are welcome! Please open an issue or pull request on [GitHub](http
 
 - Inspired by NumPy, PyTorch, and the `ndarray` crate.
 - Uses [cudarc](https://crates.io/crates/cudarc) for CUDA bindings and [bytemuck](https://crates.io/crates/bytemuck) for safe byte casts.
-- NPY I/O powered by [npyz](https://crates.io/crates/npyz).

@@ -1,9 +1,8 @@
 //! 拷贝与连续化方法宏
-use crate::cuda;
 
 #[macro_export]
 macro_rules! impl_strided_copy_to {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn strided_copy_to(&self, dst: &mut Self) -> Result<(), String> {
             if self.shape != dst.shape {
                 return Err(format!(
@@ -11,9 +10,9 @@ macro_rules! impl_strided_copy_to {
                     self.shape, dst.shape
                 ));
             }
-            let src_cell = $lock(&self.handle);
+            let src_cell = self.handle.lock();
             let src_tensor = src_cell.borrow();
-            let dst_cell = $lock(&dst.handle);
+            let dst_cell = dst.handle.lock();
             let mut dst_tensor = dst_cell.borrow_mut();
 
             if src_tensor.dtype() != dst_tensor.dtype() {
@@ -83,13 +82,12 @@ macro_rules! impl_strided_copy_to {
 
 #[macro_export]
 macro_rules! impl_contiguous {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn contiguous(&self, out: &mut Self) -> Result<(), String> {
             if out.shape != self.shape {
                 return Err("Output shape mismatch".into());
             }
-            // 使用 $lock 获取可借用的对象，然后调用 .borrow() 进行只读检查
-            if !$lock(&out.handle).borrow().is_contiguous() {
+            if !out.handle.lock().borrow().is_contiguous() {
                 return Err("Output must be contiguous".into());
             }
             self.strided_copy_to(out)
@@ -100,15 +98,16 @@ macro_rules! impl_contiguous {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DTYPE_FLOAT32;
+    use crate::cuda;
     use crate::cuda::{
-        self, get_device_count as get_cuda_device_count, is_available as cuda_available,
+        get_device_count as get_cuda_device_count, is_available as cuda_available,
         set_device as set_current_device,
     };
     use crate::s;
     use crate::tensor::Tensor;
     use crate::view::TensorViewOps;
     use crate::view::{arc_view_to_vec_f32, rc_view_to_vec_f32};
-    use crate::DTYPE_FLOAT32;
 
     #[test]
     fn test_arc_same_device_copy() {

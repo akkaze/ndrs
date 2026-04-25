@@ -1,21 +1,49 @@
+// ndrs/src/dtype.rs
 use crate::device::Device;
 use crate::kernel::*;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub type DType = u32;
 
 pub const DTYPE_FLOAT32: DType = 1;
 pub const DTYPE_INT32: DType = 2;
 
-#[derive(Clone, Copy)]
-pub struct TypeInfo {
-    pub size: usize,
-    pub name: &'static str,
+static NEXT_DTYPE_ID: AtomicU32 = AtomicU32::new(1000);
+
+pub fn allocate_dtype() -> DType {
+    NEXT_DTYPE_ID.fetch_add(1, Ordering::SeqCst)
 }
 
-pub type BinaryOp = Arc<
+#[derive(Clone)]
+pub struct TypeInfo {
+    pub size: usize,
+    pub name: String,
+}
+
+#[derive(Hash, PartialEq, Eq, Clone, Copy)]
+pub enum BinaryOpKind {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+impl BinaryOpKind {
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            BinaryOpKind::Add => 0,
+            BinaryOpKind::Sub => 1,
+            BinaryOpKind::Mul => 2,
+            BinaryOpKind::Div => 3,
+        }
+    }
+}
+
+pub type BinaryOpFn = Arc<
     dyn Fn(
             *const u8,
             *const usize,
@@ -35,14 +63,14 @@ pub type BinaryOp = Arc<
 
 struct TypeRegistryInner {
     info: HashMap<DType, TypeInfo>,
-    add_op: HashMap<DType, BinaryOp>,
+    binary_ops: HashMap<(DType, BinaryOpKind, Device), BinaryOpFn>,
 }
 
 impl TypeRegistryInner {
     fn new() -> Self {
         TypeRegistryInner {
             info: HashMap::new(),
-            add_op: HashMap::new(),
+            binary_ops: HashMap::new(),
         }
     }
 }
@@ -54,143 +82,200 @@ impl TypeRegistry {
         TypeRegistry(RwLock::new(TypeRegistryInner::new()))
     }
 
-    pub fn register(&self, dtype: DType, info: TypeInfo, add_op: BinaryOp) {
+    pub fn register_dtype(&self, dtype: DType, info: TypeInfo) {
         let mut inner = self.0.write().unwrap();
         inner.info.insert(dtype, info);
-        inner.add_op.insert(dtype, add_op);
+    }
+
+    pub fn register_binary_op(
+        &self,
+        dtype: DType,
+        kind: BinaryOpKind,
+        device: Device,
+        op: BinaryOpFn,
+    ) -> Result<(), String> {
+        let mut inner = self.0.write().unwrap();
+        inner.binary_ops.insert((dtype, kind, device), op);
+        Ok(())
     }
 
     pub fn get_info(&self, dtype: DType) -> Option<TypeInfo> {
-        self.0.read().unwrap().info.get(&dtype).copied()
+        self.0.read().unwrap().info.get(&dtype).cloned()
     }
 
-    pub fn get_add_op(&self, dtype: DType) -> Option<BinaryOp> {
-        self.0.read().unwrap().add_op.get(&dtype).cloned()
+    pub fn get_binary_op(
+        &self,
+        dtype: DType,
+        kind: BinaryOpKind,
+        device: Device,
+    ) -> Option<BinaryOpFn> {
+        self.0
+            .read()
+            .unwrap()
+            .binary_ops
+            .get(&(dtype, kind, device))
+            .cloned()
     }
 }
 
 pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
     let reg = TypeRegistry::new();
 
-    // float32
-    reg.register(
+    // 内置类型信息（使用 String）
+    reg.register_dtype(
         DTYPE_FLOAT32,
         TypeInfo {
             size: 4,
-            name: "float32",
+            name: "float32".to_string(),
         },
-        Arc::new(
-            |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
-                let a_ptr = a as *const f32;
-                let b_ptr = b as *const f32;
-                let c_ptr = c as *mut f32;
-                match dev {
-                    Device::Cpu => unsafe {
-                        cpu_strided_add_f32(
-                            a_ptr,
-                            a_strides,
-                            b_ptr,
-                            b_strides,
-                            c_ptr,
-                            c_strides,
-                            shape,
-                            ndim as i32,
-                            n,
-                        );
-                        Ok(())
-                    },
-                    Device::Cuda(_) => unsafe {
-                        let err = gpu_strided_add_f32(
-                            a_ptr,
-                            a_strides,
-                            b_ptr,
-                            b_strides,
-                            c_ptr,
-                            c_strides,
-                            shape,
-                            ndim as i32,
-                            n,
-                            stream.unwrap(),
-                        );
-                        if err != 0 {
-                            Err(format!("GPU add failed with error {}", err))
-                        } else {
-                            Ok(())
-                        }
-                    },
-                }
-            },
-        ),
     );
-
-    // int32 (修复：使用正确的 DType 和名称)
-    reg.register(
+    reg.register_dtype(
         DTYPE_INT32,
         TypeInfo {
             size: 4,
-            name: "int32",
+            name: "int32".to_string(),
         },
-        Arc::new(
-            |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
-                let a_ptr = a as *const i32;
-                let b_ptr = b as *const i32;
-                let c_ptr = c as *mut i32;
-                match dev {
-                    Device::Cpu => unsafe {
-                        cpu_strided_add_i32(
-                            a_ptr,
-                            a_strides,
-                            b_ptr,
-                            b_strides,
-                            c_ptr,
-                            c_strides,
-                            shape,
-                            ndim as i32,
-                            n,
-                        );
-                        Ok(())
-                    },
-                    Device::Cuda(_) => unsafe {
-                        let err = gpu_strided_add_i32(
-                            a_ptr,
-                            a_strides,
-                            b_ptr,
-                            b_strides,
-                            c_ptr,
-                            c_strides,
-                            shape,
-                            ndim as i32,
-                            n,
-                            stream.unwrap(),
-                        );
-                        if err != 0 {
-                            Err(format!("GPU add failed with error {}", err))
-                        } else {
-                            Ok(())
-                        }
-                    },
-                }
-            },
-        ),
     );
+
+    // CPU 加法
+    let add_f32_cpu: BinaryOpFn = Arc::new(
+        |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, _| {
+            let a_ptr = a as *const f32;
+            let b_ptr = b as *const f32;
+            let c_ptr = c as *mut f32;
+            unsafe {
+                cpu_strided_add_f32(
+                    a_ptr,
+                    a_strides,
+                    b_ptr,
+                    b_strides,
+                    c_ptr,
+                    c_strides,
+                    shape,
+                    ndim as i32,
+                    n,
+                );
+            }
+            Ok(())
+        },
+    );
+    reg.register_binary_op(DTYPE_FLOAT32, BinaryOpKind::Add, Device::Cpu, add_f32_cpu)
+        .unwrap();
+
+    // GPU 加法
+    let add_f32_gpu: BinaryOpFn = Arc::new(
+        |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
+            let a_ptr = a as *const f32;
+            let b_ptr = b as *const f32;
+            let c_ptr = c as *mut f32;
+            unsafe {
+                let err = gpu_strided_add_f32(
+                    a_ptr,
+                    a_strides,
+                    b_ptr,
+                    b_strides,
+                    c_ptr,
+                    c_strides,
+                    shape,
+                    ndim as i32,
+                    n,
+                    stream.unwrap(),
+                );
+                if err != 0 {
+                    return Err(format!("GPU add failed: {}", err));
+                }
+            }
+            Ok(())
+        },
+    );
+    reg.register_binary_op(
+        DTYPE_FLOAT32,
+        BinaryOpKind::Add,
+        Device::Cuda(0),
+        add_f32_gpu,
+    )
+    .unwrap();
+
+    let add_i32_cpu: BinaryOpFn = Arc::new(
+        |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, _| {
+            let a_ptr = a as *const i32;
+            let b_ptr = b as *const i32;
+            let c_ptr = c as *mut i32;
+            unsafe {
+                cpu_strided_add_i32(
+                    a_ptr,
+                    a_strides,
+                    b_ptr,
+                    b_strides,
+                    c_ptr,
+                    c_strides,
+                    shape,
+                    ndim as i32,
+                    n,
+                );
+            }
+            Ok(())
+        },
+    );
+    reg.register_binary_op(DTYPE_INT32, BinaryOpKind::Add, Device::Cpu, add_i32_cpu)
+        .unwrap();
+
+    let add_i32_gpu: BinaryOpFn = Arc::new(
+        |a, a_strides, b, b_strides, c, c_strides, shape, ndim, n, dev, stream| {
+            let a_ptr = a as *const i32;
+            let b_ptr = b as *const i32;
+            let c_ptr = c as *mut i32;
+            unsafe {
+                let err = gpu_strided_add_i32(
+                    a_ptr,
+                    a_strides,
+                    b_ptr,
+                    b_strides,
+                    c_ptr,
+                    c_strides,
+                    shape,
+                    ndim as i32,
+                    n,
+                    stream.unwrap(),
+                );
+                if err != 0 {
+                    return Err(format!("GPU add failed: {}", err));
+                }
+            }
+            Ok(())
+        },
+    );
+    reg.register_binary_op(DTYPE_INT32, BinaryOpKind::Add, Device::Cuda(0), add_i32_gpu)
+        .unwrap();
 
     reg
 });
 
+// 公共 API
 pub fn register_dtype(dtype: DType, info: TypeInfo) {
-    TYPE_REGISTRY.0.write().unwrap().info.insert(dtype, info);
+    TYPE_REGISTRY.register_dtype(dtype, info);
 }
 
-pub fn register_add_op(dtype: DType, op: BinaryOp) {
-    TYPE_REGISTRY.0.write().unwrap().add_op.insert(dtype, op);
+pub fn register_binary_op(
+    dtype: DType,
+    kind: BinaryOpKind,
+    device: Device,
+    op: BinaryOpFn,
+) -> Result<(), String> {
+    TYPE_REGISTRY.register_binary_op(dtype, kind, device, op)
 }
 
 pub fn get_dtype_info(dtype: DType) -> Option<TypeInfo> {
     TYPE_REGISTRY.get_info(dtype)
 }
 
-pub fn get_add_op(dtype: DType) -> Option<BinaryOp> {
-    TYPE_REGISTRY.get_add_op(dtype)
+pub fn get_binary_op(dtype: DType, kind: BinaryOpKind, device: Device) -> Option<BinaryOpFn> {
+    TYPE_REGISTRY.get_binary_op(dtype, kind, device)
+}
+
+// 为了方便旧代码，保留 get_add_op 但需要 device 参数
+pub fn get_add_op(dtype: DType, device: Device) -> Option<BinaryOpFn> {
+    get_binary_op(dtype, BinaryOpKind::Add, device)
 }
 
 pub trait DTypeMapping {

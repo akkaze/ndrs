@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-extern "C" {
+unsafe extern "C" {
     pub fn cpu_strided_add_f32(
         a: *const f32,
         a_strides: *const usize,

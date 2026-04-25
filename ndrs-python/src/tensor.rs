@@ -1,78 +1,68 @@
-use ndrs::{ArcTensorView, Device, Tensor, TensorViewOps};
+use ndrs::tensor::ArcTensor;
+use ndrs::{DType, Device, Tensor, TensorViewOps, DTYPE_FLOAT32, DTYPE_INT32};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::PyBytes;
 
-#[pyclass(name = "Tensor")]
+fn parse_device(s: &str) -> Result<Device, String> {
+    s.parse()
+}
+
+#[pyclass(name = "PyTensor")]
 pub struct PyTensor {
-    inner: ArcTensorView,
+    inner: ArcTensor,
 }
 
 #[pymethods]
 impl PyTensor {
-    #[new]
-    fn from_list(list: &Bound<'_, PyList>, device: Option<String>) -> PyResult<Self> {
-        let shape = vec![list.len()];
-        let mut data = Vec::with_capacity(list.len());
-        for elem in list.iter() {
-            let f = elem.extract::<f64>()? as f32;
-            data.push(f);
-        }
-        let tensor = Tensor::new_cpu_from_f32(data, shape);
-        let view = tensor.into_arc().as_view();
-        let device = device.unwrap_or_else(|| "cpu".to_string());
-        let dev = parse_device(&device).map_err(|e| PyRuntimeError::new_err(e))?;
-        let view = if dev == Device::Cpu {
-            view.to_cpu().map_err(|e| PyRuntimeError::new_err(e))?
-        } else {
-            let id = dev.as_cuda_index().unwrap();
-            view.to_gpu(id).map_err(|e| PyRuntimeError::new_err(e))?
-        };
-        Ok(PyTensor { inner: view })
+    #[staticmethod]
+    fn from_bytes(
+        py: Python,
+        bytes: &Bound<'_, PyBytes>,
+        shape: Vec<usize>,
+        dtype_id: u32, // 改为 u32
+        device: Option<String>,
+    ) -> PyResult<Self> {
+        let dev = device.unwrap_or_else(|| "cpu".to_string());
+        let dev = parse_device(&dev).map_err(|e| PyRuntimeError::new_err(e))?;
+        let tensor = Tensor::new_from_bytes(
+            bytes.as_bytes().to_vec().into_boxed_slice(),
+            shape,
+            dtype_id,
+            dev,
+        )
+        .map_err(|e| PyRuntimeError::new_err(e))?;
+        Ok(PyTensor {
+            inner: tensor.into_arc(),
+        })
     }
 
     fn shape(&self) -> Vec<usize> {
-        self.inner.shape().to_vec()
+        self.inner.shape()
     }
 
     fn dtype(&self) -> String {
         match self.inner.dtype() {
-            ndrs::DTYPE_FLOAT32 => "float32".to_string(),
-            ndrs::DTYPE_INT32 => "int32".to_string(),
+            DTYPE_FLOAT32 => "float32".to_string(),
+            DTYPE_INT32 => "int32".to_string(),
             _ => "unknown".to_string(),
         }
     }
 
     fn device(&self) -> String {
-        let guard = self.inner.handle().0.lock();
-        let tensor = guard.borrow();
-        tensor.device().to_string()
+        self.inner.device().to_string()
     }
 
-    fn to_cpu(&self) -> PyResult<Self> {
+    fn __add__(&self, other: &PyTensor) -> Self {
+        PyTensor {
+            inner: self.inner.clone() + other.inner.clone(),
+        }
+    }
+
+    fn as_bytes<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyBytes>> {
         let cpu_view = self
             .inner
-            .to_cpu()
-            .map_err(|e| PyRuntimeError::new_err(e))?;
-        Ok(PyTensor { inner: cpu_view })
-    }
-
-    fn to_gpu(&self, device_id: usize) -> PyResult<Self> {
-        let gpu_view = self
-            .inner
-            .to_gpu(device_id)
-            .map_err(|e| PyRuntimeError::new_err(e))?;
-        Ok(PyTensor { inner: gpu_view })
-    }
-
-    fn __add__(&self, other: &PyTensor) -> PyResult<Self> {
-        let result = self.inner.clone() + other.inner.clone();
-        Ok(PyTensor { inner: result })
-    }
-
-    fn numpy(&self) -> PyResult<Vec<f32>> {
-        let cpu_view = self
-            .inner
+            .as_view()
             .to_cpu()
             .map_err(|e| PyRuntimeError::new_err(e))?;
         let guard = cpu_view.handle().0.lock();
@@ -80,14 +70,12 @@ impl PyTensor {
         let bytes = tensor
             .as_bytes()
             .ok_or_else(|| PyRuntimeError::new_err("No bytes"))?;
-        let slice =
-            unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, self.inner.size()) };
-        Ok(slice.to_vec())
+        Ok(PyBytes::new(py, bytes))
     }
-}
 
-fn parse_device(s: &str) -> Result<Device, String> {
-    s.parse()
+    fn dtype_id(&self) -> u32 {
+        self.inner.dtype()
+    }
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

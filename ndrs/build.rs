@@ -19,7 +19,9 @@ fn main() {
     let cuda_enabled = cuda_feature_enabled && cuda_available;
 
     if cuda_feature_enabled && !cuda_available {
-        eprintln!("cargo:warning=CUDA feature enabled but CUDA toolkit not found. Falling back to CPU-only mode.");
+        eprintln!(
+            "cargo:warning=CUDA feature enabled but CUDA toolkit not found. Falling back to CPU-only mode."
+        );
     }
 
     println!(
@@ -98,8 +100,10 @@ fn main() {
         // 让 nvcc 能找到 cl.exe
         if let Some(cl_dir) = &clang_path {
             let cl_dir_str = cl_dir.to_str().expect("Invalid cl.exe directory");
-            env::set_var("NVCC_CCBIN", cl_dir_str);
-            env::set_var("CUDA_CCBIN", cl_dir_str);
+            unsafe {
+                env::set_var("NVCC_CCBIN", cl_dir_str);
+                env::set_var("CUDA_CCBIN", cl_dir_str);
+            }
         }
 
         let cuda_file = kernel_dir.join("src").join("cuda").join("ops.cu");

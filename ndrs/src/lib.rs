@@ -1,3 +1,4 @@
+// ndrs/src/lib.rs
 pub mod backend;
 pub mod device;
 pub mod dtype;
@@ -11,13 +12,13 @@ pub mod view_ops;
 pub use backend::cpu;
 pub use backend::cuda;
 
-// 统一设备/流 API
 pub use device::Device;
-
-// 其他导出保持不变
-pub use dtype::{DType, DTYPE_FLOAT32, DTYPE_INT32};
+pub use dtype::{
+    BinaryOpFn, BinaryOpKind, DTYPE_FLOAT32, DTYPE_INT32, DType, TypeInfo, allocate_dtype,
+    get_add_op, get_binary_op, register_binary_op, register_dtype,
+};
 pub use tensor::Tensor;
-pub use view::{broadcast_shapes, ArcTensorView, RcTensorView, SliceInfo, TensorViewOps};
+pub use view::{ArcTensorView, RcTensorView, SliceInfo, TensorViewOps, broadcast_shapes};
 
 #[cfg(test)]
 mod test_init {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::dtype::{get_dtype_info, DTypeMapping};
+use crate::dtype::{DTypeMapping, get_dtype_info};
 use crate::tensor::{DataPtr, Tensor};
 use bytemuck::Pod;
 use parking_lot::ReentrantMutex;

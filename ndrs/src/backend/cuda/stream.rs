@@ -1,7 +1,7 @@
 use super::device::{get_device, get_device_context};
 use super::event::Event;
-use cudarc::driver::sys::CUevent_flags;
 use cudarc::driver::CudaStream;
+use cudarc::driver::sys::CUevent_flags;
 use std::sync::Arc;
 
 #[derive(Clone)]

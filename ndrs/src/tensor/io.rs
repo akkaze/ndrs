@@ -104,7 +104,7 @@ pub fn save_npy<P: AsRef<Path>>(tensor: &Tensor, path: P) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{tensor, DTYPE_FLOAT32, DTYPE_INT32};
+    use crate::{DTYPE_FLOAT32, DTYPE_INT32, tensor};
     use tempfile::NamedTempFile;
 
     #[test]

@@ -1,19 +1,27 @@
+use ndrs::{BinaryOpKind, DTYPE_FLOAT32, DTYPE_INT32};
 use pyo3::prelude::*;
 
-mod cuda;
+mod register;
 mod tensor;
+
+fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("DTYPE_FLOAT32", DTYPE_FLOAT32)?;
+    m.add("DTYPE_INT32", DTYPE_INT32)?;
+    m.add("BINARY_OP_ADD", BinaryOpKind::Add.as_u32())?;
+    m.add("BINARY_OP_SUB", BinaryOpKind::Sub.as_u32())?;
+    m.add("BINARY_OP_MUL", BinaryOpKind::Mul.as_u32())?;
+    m.add("BINARY_OP_DIV", BinaryOpKind::Div.as_u32())?;
+    Ok(())
+}
 
 #[pymodule]
 fn _ndrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // 注册 cuda 子模块
-    let cuda_module = PyModule::new(m.py(), "cuda")?;
-    cuda::device::register(&cuda_module)?;
-    cuda::stream::register(&cuda_module)?;
-    cuda::event::register(&cuda_module)?;
-    m.add_submodule(&cuda_module)?;
-
-    // 注册 tensor 模块
+    // 注册 tensor 类
     tensor::register(m)?;
-
+    // 添加注册函数
+    m.add_function(wrap_pyfunction!(register::register_dtype_py, m)?)?;
+    m.add_function(wrap_pyfunction!(register::register_binary_op_raw, m)?)?;
+    // 添加常量
+    register_constants(m)?;
     Ok(())
 }

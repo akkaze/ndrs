@@ -1,12 +1,12 @@
 //! 具体视图类型：RcTensorView 和 ArcTensorView
 use super::slice::{SliceArg, SliceInfo};
 use super::trait_def::TensorViewOps;
+use crate::Device;
 use crate::cuda;
 use crate::cuda::Stream;
-use crate::dtype::{get_dtype_info, DType};
+use crate::dtype::{DType, get_dtype_info};
 use crate::kernel::*;
 use crate::tensor::{ArcTensor, DataPtr, RcTensor, Tensor};
-use crate::Device;
 use cudarc::driver::DevicePtr;
 use parking_lot::ReentrantMutexGuard;
 use std::cell::RefCell;
@@ -32,8 +32,10 @@ fn into_arc(t: Tensor) -> ArcTensor {
     ArcTensor::from(t)
 }
 
+// 修改宏定义，去掉 $lock 和 $into_handle 参数
 macro_rules! impl_tensor_view {
-    ($name:ident, $handle:ty, $lock:ident, $into_handle:expr) => {
+    ($name:ident, $handle:ty) => {
+        // 只保留类型名和句柄类型
         #[derive(Clone)]
         pub struct $name {
             handle: $handle,
@@ -47,8 +49,8 @@ macro_rules! impl_tensor_view {
         impl $name {
             pub fn new(handle: $handle) -> Self {
                 let (shape, strides, dtype, device) = {
-                    let cell = $lock(&handle);
-                    let tensor = cell.borrow(); // 只读借用
+                    let cell = handle.lock(); // 直接使用 handle.lock()
+                    let tensor = cell.borrow();
                     (
                         tensor.shape().to_vec(),
                         tensor.strides().to_vec(),
@@ -111,7 +113,7 @@ macro_rules! impl_tensor_view {
                         }
                     }
                 };
-                Ok($name::new($into_handle(new_tensor)))
+                Ok($name::new(<$handle>::from_tensor(new_tensor))) // 使用 from_tensor
             }
         }
 
@@ -148,19 +150,15 @@ macro_rules! impl_tensor_view {
             fn shape(&self) -> &[usize] {
                 &self.shape
             }
-
             fn strides(&self) -> &[usize] {
                 &self.strides
             }
-
             fn offset(&self) -> usize {
                 self.offset
             }
-
             fn dtype(&self) -> DType {
                 self.dtype
             }
-
             fn size(&self) -> usize {
                 self.shape.iter().product()
             }
@@ -172,36 +170,34 @@ macro_rules! impl_tensor_view {
                 src.strided_copy_to(self)
             }
 
-            // 其他宏展开
-            $crate::impl_device_transfer!($name, $lock, $into_handle);
-            $crate::impl_broadcast_to!($name, $lock, $into_handle);
-            $crate::impl_transpose!($name, $lock, $into_handle);
-            $crate::impl_slice!($name, $lock, $into_handle);
-            $crate::impl_concat_split!($name, $lock, $into_handle);
-            $crate::impl_strided_copy_to!($name, $lock, $into_handle);
-            $crate::impl_contiguous!($name, $lock, $into_handle);
-            $crate::impl_matmul_with_out!($name, $lock, $into_handle);
-            $crate::impl_matmul!($name, $lock, $into_handle);
+            // 直接调用不带参数的辅助宏，这些宏内部使用 handle.lock() 和 <$handle>::from_tensor
+            $crate::impl_device_transfer!($name, $handle);
+            $crate::impl_broadcast_to!($name, $handle);
+            $crate::impl_transpose!($name, $handle);
+            $crate::impl_slice!($name, $handle);
+            $crate::impl_concat_split!($name, $handle);
+            $crate::impl_strided_copy_to!($name, $handle);
+            $crate::impl_contiguous!($name, $handle);
+            $crate::impl_matmul_with_out!($name, $handle);
+            $crate::impl_matmul!($name, $handle);
         }
 
-        // 加法操作宏也需要修改
-        $crate::impl_add_for_view!($name, $lock, $into_handle);
+        // 加法宏也不再需要额外参数
+        $crate::impl_add_for_view!($name, $handle);
     };
 }
-impl_tensor_view!(RcTensorView, RcTensor, lock_rc, into_rc);
-impl_tensor_view!(ArcTensorView, ArcTensor, lock_arc, into_arc);
 
-pub trait AsView {
-    type View: TensorViewOps;
-    fn as_view(&self) -> Self::View;
-}
+// 调用宏，只传递类型名称和句柄类型
+impl_tensor_view!(RcTensorView, RcTensor);
+impl_tensor_view!(ArcTensorView, ArcTensor);
 
+// define_view_to_vec 宏也做相应修改，去掉 lock 辅助函数
 macro_rules! define_view_to_vec {
-    ($func_name:ident, $view_type:ident, $into_handle:expr, $lock:ident) => {
+    ($func_name:ident, $view_type:ident) => {
         fn $func_name<T: bytemuck::Pod + crate::dtype::DTypeMapping>(view: &$view_type) -> Vec<T> {
             let cpu_view = view.to_cpu().expect("Failed to copy to CPU");
-            let cell = $lock(&cpu_view.handle);
-            let tensor = cell.borrow(); // 添加 .borrow()
+            let cell = cpu_view.handle.lock();
+            let tensor = cell.borrow();
             let bytes = tensor.as_bytes().expect("Failed to get bytes");
             let result = unsafe {
                 std::slice::from_raw_parts(bytes.as_ptr() as *const T, view.size()).to_vec()
@@ -211,8 +207,8 @@ macro_rules! define_view_to_vec {
     };
 }
 
-define_view_to_vec!(rc_view_to_vec, RcTensorView, into_rc, lock_rc);
-define_view_to_vec!(arc_view_to_vec, ArcTensorView, into_arc, lock_arc);
+define_view_to_vec!(rc_view_to_vec, RcTensorView);
+define_view_to_vec!(arc_view_to_vec, ArcTensorView);
 
 pub fn rc_view_to_vec_f32(view: &RcTensorView) -> Vec<f32> {
     rc_view_to_vec(view)
@@ -224,6 +220,7 @@ pub fn arc_view_to_vec_f32(view: &ArcTensorView) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DTYPE_FLOAT32;
     use crate::cuda::{
         self, get_device_count as get_cuda_device_count, is_available as cuda_available,
         set_device as set_current_device,
@@ -231,7 +228,6 @@ mod tests {
     use crate::s;
     use crate::tensor::Tensor;
     use crate::view::trait_def::TensorViewOps;
-    use crate::DTYPE_FLOAT32;
 
     // ---------- RcTensorView 测试 ----------
     #[test]

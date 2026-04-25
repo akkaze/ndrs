@@ -6,35 +6,24 @@ use crate::view::TensorViewOps;
 
 #[macro_export]
 macro_rules! impl_device_transfer {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn to(&self, out: &mut Self, target_device: Device) -> Result<(), String> {
             if self.shape != out.shape {
                 return Err("Shape mismatch".into());
             }
 
             match (self.device, target_device) {
-                (src_dev, dst_dev) if src_dev == dst_dev => {
-                    // 设备相同，直接复制（strided_copy_to 内部会自行加锁）
-                    self.strided_copy_to(out)
-                }
+                (src_dev, dst_dev) if src_dev == dst_dev => self.strided_copy_to(out),
                 (Device::Cpu, Device::Cuda(idx)) => {
-                    // 检查连续性，如果不连续则先连续化到临时 CPU 张量
                     if !self.is_contiguous() {
                         let mut temp = self.create_output()?;
                         self.contiguous(&mut temp)?;
                         return temp.to(out, target_device);
                     }
-                    // 获取源和目标的锁
-                    let src_cell = $lock(&self.handle);
+                    let src_cell = self.handle.lock();
                     let src_tensor = src_cell.borrow();
-                    if self.dtype != src_tensor.dtype() {
-                        return Err("Dtype mismatch".into());
-                    }
-                    let dst_cell = $lock(&out.handle);
+                    let dst_cell = out.handle.lock();
                     let mut dst_tensor = dst_cell.borrow_mut();
-                    if dst_tensor.dtype() != self.dtype {
-                        return Err("Dtype mismatch".into());
-                    }
                     let dst_gpu = match &mut dst_tensor.data {
                         DataPtr::Gpu(s) => s,
                         _ => return Err("Output is not GPU memory".into()),
@@ -44,14 +33,12 @@ macro_rules! impl_device_transfer {
                         _ => unreachable!(),
                     };
                     let stream = cuda::get_stream().map_err(|e| e.to_string())?;
-                    if let Err(e) = stream.inner().memcpy_htod(src_bytes, dst_gpu) {
-                        return Err(e.to_string());
-                    }
-                    if let Err(e) = stream.synchronize() {
-                        return Err(e.to_string());
-                    }
+                    stream
+                        .inner()
+                        .memcpy_htod(src_bytes, dst_gpu)
+                        .map_err(|e| e.to_string())?;
+                    stream.synchronize().map_err(|e| e.to_string())?;
                     dst_tensor.device = Device::Cuda(idx);
-                    // 锁在此作用域结束后自动释放
                     Ok(())
                 }
                 (Device::Cuda(_), Device::Cpu) => {
@@ -60,9 +47,9 @@ macro_rules! impl_device_transfer {
                         self.contiguous(&mut temp)?;
                         return temp.to(out, target_device);
                     }
-                    let src_cell = $lock(&self.handle);
+                    let src_cell = self.handle.lock();
                     let src_tensor = src_cell.borrow();
-                    let dst_cell = $lock(&out.handle);
+                    let dst_cell = out.handle.lock();
                     let mut dst_tensor = dst_cell.borrow_mut();
                     let src_gpu = match &src_tensor.data {
                         DataPtr::Gpu(s) => s,
@@ -73,17 +60,15 @@ macro_rules! impl_device_transfer {
                         _ => return Err("Output is not CPU memory".into()),
                     };
                     let stream = cuda::get_stream().map_err(|e| e.to_string())?;
-                    if let Err(e) = stream.inner().memcpy_dtoh(src_gpu, dst_bytes) {
-                        return Err(e.to_string());
-                    }
-                    if let Err(e) = stream.synchronize() {
-                        return Err(e.to_string());
-                    }
+                    stream
+                        .inner()
+                        .memcpy_dtoh(src_gpu, dst_bytes)
+                        .map_err(|e| e.to_string())?;
+                    stream.synchronize().map_err(|e| e.to_string())?;
                     dst_tensor.device = Device::Cpu;
                     Ok(())
                 }
                 (Device::Cuda(src_idx), Device::Cuda(dst_idx)) if src_idx != dst_idx => {
-                    // 不同 GPU 之间，通过 CPU 中转
                     let mut cpu_temp = self.create_output()?;
                     self.to(&mut cpu_temp, Device::Cpu)?;
                     cpu_temp.to(out, target_device)
@@ -103,6 +88,8 @@ macro_rules! impl_device_transfer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DTYPE_FLOAT32;
+    use crate::Device;
     use crate::cuda::{
         self, get_device_count as get_cuda_device_count, is_available as cuda_available,
         set_device as set_current_device,
@@ -110,8 +97,6 @@ mod tests {
     use crate::s;
     use crate::tensor::Tensor;
     use crate::view::{arc_view_to_vec_f32, rc_view_to_vec_f32};
-    use crate::Device;
-    use crate::DTYPE_FLOAT32;
 
     #[test]
     fn test_rc_to_cpu() {

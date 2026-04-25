@@ -48,3 +48,8 @@ pub trait TensorViewOps: Clone {
     fn assign(&mut self, src: &Self) -> Result<(), String>;
     fn slice(&self, info: &SliceInfo) -> Result<Self, String>;
 }
+
+pub trait AsView {
+    type View: TensorViewOps;
+    fn as_view(&self) -> Self::View;
+}

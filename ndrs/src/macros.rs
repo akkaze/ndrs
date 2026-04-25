@@ -156,6 +156,7 @@ macro_rules! tensor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Device;
     use crate::dtype::{DTYPE_FLOAT32, DTYPE_INT32};
 
     #[test]
@@ -176,5 +177,39 @@ mod tests {
         let t = tensor!([]);
         assert_eq!(t.shape(), &[0]);
         assert_eq!(t.size(), 0);
+    }
+
+    #[test]
+    fn test_tensor_macro_device_only() {
+        let t = tensor!([[1, 2], [3, 4]]; "cpu");
+        assert_eq!(t.device(), Device::Cpu);
+        assert_eq!(t.dtype(), DTYPE_INT32); // 自动推断为 int
+
+        let t = tensor!([[1.0, 2.0], [3.0, 4.0]]; "cpu");
+        assert_eq!(t.device(), Device::Cpu);
+        assert_eq!(t.dtype(), DTYPE_FLOAT32);
+
+        if crate::cuda::is_available() {
+            let t = tensor!([[1, 2], [3, 4]]; "cuda:0");
+            assert_eq!(t.device(), Device::Cuda(0));
+            assert_eq!(t.dtype(), DTYPE_INT32);
+        }
+    }
+
+    #[test]
+    fn test_tensor_macro_with_device_string() {
+        // 默认 CPU
+        let t = tensor!([[1, -2], [3, 4]]);
+        assert_eq!(t.device(), Device::Cpu);
+
+        // 指定 f32 + CPU
+        let t = tensor!([[1, -2], [3, 4]]; f32);
+        assert_eq!(t.dtype(), DTYPE_FLOAT32);
+
+        // 指定设备字符串 cuda:0（需要 CUDA）
+        if crate::cuda::is_available() {
+            let t = tensor!([[1.0, 2.0], [3.0, 4.0]]; f32; "cuda:0");
+            assert_eq!(t.device(), Device::Cuda(0));
+        }
     }
 }

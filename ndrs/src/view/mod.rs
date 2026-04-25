@@ -7,6 +7,6 @@ mod views;
 
 pub use broadcast::broadcast_shapes;
 pub use slice::{SliceArg, SliceInfo};
-pub use trait_def::TensorViewOps;
+pub use trait_def::{AsView, TensorViewOps};
+pub use views::{ArcTensorView, RcTensorView};
 pub use views::{arc_view_to_vec_f32, rc_view_to_vec_f32};
-pub use views::{ArcTensorView, AsView, RcTensorView};

@@ -2,7 +2,7 @@
 
 #[macro_export]
 macro_rules! impl_add_for_view {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         impl std::ops::Add for $view_type {
             type Output = Self;
             fn add(self, other: Self) -> Self::Output {
@@ -23,26 +23,22 @@ macro_rules! impl_add_for_view {
                     other.shape(),
                     "Shapes must match for AddAssign"
                 );
-                // 创建临时输出，形状与 self 相同
                 let mut temp = self.create_output().expect("Failed to create temp");
-                // 将 self 复制到 temp
                 self.strided_copy_to(&mut temp)
                     .expect("Copy to temp failed");
-                // 计算 temp + other，结果放入 result
                 let mut result = self.create_output().expect("Failed to create result");
                 $view_type::add(&temp, &other, &mut result).expect("Addition failed");
-                // 将结果复制回 self
                 result.strided_copy_to(self).expect("Copy back failed");
             }
         }
 
         impl $view_type {
             pub fn add(a: &Self, b: &Self, out: &mut Self) -> Result<(), String> {
-                let a_cell = $lock(&a.handle);
+                let a_cell = a.handle.lock();
                 let a_t = a_cell.borrow();
-                let b_cell = $lock(&b.handle);
+                let b_cell = b.handle.lock();
                 let b_t = b_cell.borrow();
-                let out_cell = $lock(&out.handle);
+                let out_cell = out.handle.lock();
                 let mut out_t = out_cell.borrow_mut();
 
                 let a_dev = a_t.device();
@@ -61,7 +57,13 @@ macro_rules! impl_add_for_view {
                 }
 
                 let n = a.shape().iter().product();
-                let add_op = $crate::dtype::get_add_op(a_t.dtype()).expect("Add op not registered");
+                let add_op = $crate::dtype::get_add_op(a_t.dtype(), a_dev).ok_or_else(|| {
+                    format!(
+                        "Add op not registered for dtype {} on device {:?}",
+                        a_t.dtype(),
+                        a_dev
+                    )
+                })?;
                 match a_t.device() {
                     $crate::device::Device::Cpu => {
                         let a_ptr = a_t.data_ptr(None);

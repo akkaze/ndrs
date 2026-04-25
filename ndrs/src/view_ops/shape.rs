@@ -2,7 +2,7 @@
 
 #[macro_export]
 macro_rules! impl_broadcast_to {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn broadcast_to(&self, target_shape: &[usize]) -> Result<Self, String> {
             if self.shape.len() > target_shape.len() {
                 return Err("Cannot broadcast to fewer dimensions".into());
@@ -30,7 +30,7 @@ macro_rules! impl_broadcast_to {
 
 #[macro_export]
 macro_rules! impl_transpose {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn transpose(&self, axes: &[usize]) -> Result<Self, String> {
             if axes.len() != self.shape.len() {
                 return Err("Axes length mismatch".into());
@@ -53,7 +53,7 @@ macro_rules! impl_transpose {
 
 #[macro_export]
 macro_rules! impl_slice {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn slice(&self, info: &$crate::view::SliceInfo) -> Result<Self, String> {
             let slices = info.args();
             let mut new_offset = self.offset;
@@ -146,7 +146,7 @@ macro_rules! impl_slice {
 
 #[macro_export]
 macro_rules! impl_concat_split {
-    ($view_type:ident, $lock:ident, $into_handle:expr) => {
+    ($view_type:ident, $handle:ty) => {
         fn concat_with_out(views: &[&Self], axis: usize, out: &mut Self) -> Result<(), String> {
             if views.is_empty() {
                 return Err("No views to concatenate".into());
@@ -184,7 +184,6 @@ macro_rules! impl_concat_split {
             Ok(())
         }
 
-        // 将当前张量沿指定轴分割成多个视图，输出到预先分配的 `out_views` 中。
         fn split_with_outs(
             &self,
             sizes: &[usize],
@@ -212,7 +211,7 @@ macro_rules! impl_concat_split {
                 slices[axis] =
                     $crate::view::SliceArg::Range(offset as i32, (offset + size) as i32, 1);
                 let src_slice = self.slice(&$crate::view::SliceInfo::new(slices))?;
-                out_view.assign(&src_slice)?; // 修正方向
+                out_view.assign(&src_slice)?;
                 offset += size;
             }
             Ok(())
@@ -227,7 +226,7 @@ macro_rules! impl_concat_split {
             let mut out_shape = first_shape.to_vec();
             out_shape[axis] = total_len;
             let out_tensor = $crate::tensor::Tensor::new_contiguous(out_shape, views[0].dtype())?;
-            let mut out_view = Self::new($into_handle(out_tensor));
+            let mut out_view = Self::new(<$handle>::from_tensor(out_tensor));
             Self::concat_with_out(views, axis, &mut out_view)?;
             Ok(out_view)
         }
@@ -242,7 +241,7 @@ macro_rules! impl_concat_split {
                 let mut shape = self.shape().to_vec();
                 shape[axis] = size;
                 let out_tensor = $crate::tensor::Tensor::new_contiguous(shape, self.dtype())?;
-                out_views.push(Self::new($into_handle(out_tensor)));
+                out_views.push(Self::new(<$handle>::from_tensor(out_tensor)));
             }
             self.split_with_outs(sizes, axis, &mut out_views)?;
             Ok(out_views)
