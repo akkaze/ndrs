@@ -1,4 +1,4 @@
-//! 切片类型定义，由 s! 宏生成
+/// 切片类型定义，由 s! 宏生成
 
 #[derive(Debug, Clone)]
 pub enum SliceArg {

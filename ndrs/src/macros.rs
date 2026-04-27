@@ -1,4 +1,4 @@
-//! 切片宏实现
+/// 切片宏实现
 
 #[macro_export]
 macro_rules! s {

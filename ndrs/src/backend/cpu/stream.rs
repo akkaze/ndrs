@@ -1,5 +1,6 @@
 use super::device::get_device as is_cpu_device;
 use super::event::Event;
+use anyhow::{Context, Result, anyhow, bail};
 use std::sync::Arc;
 use threadpool::ThreadPool;
 
@@ -68,9 +69,9 @@ thread_local! {
     static CURRENT_STREAM: std::cell::RefCell<Option<Stream>> = const { std::cell::RefCell::new(None) };
 }
 
-pub fn set_stream(stream: Stream) -> Result<(), String> {
+pub fn set_stream(stream: Stream) -> anyhow::Result<()> {
     if !is_cpu_device() {
-        return Err("Cannot set CPU stream when current device is not CPU".into());
+        anyhow::bail!("Cannot set CPU stream when current device is not CPU");
     }
     CURRENT_STREAM.with(|s| *s.borrow_mut() = Some(stream));
     Ok(())

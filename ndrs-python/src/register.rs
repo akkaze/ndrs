@@ -1,3 +1,4 @@
+use anyhow::{anyhow, bail, Context, Result};
 use ndrs::{register_binary_op, BinaryOpFn, BinaryOpKind, Device, DTYPE_FLOAT32, DTYPE_INT32};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -51,12 +52,13 @@ pub fn register_binary_op_raw(
             if ret == 0 {
                 Ok(())
             } else {
-                Err(format!("Custom op failed with code {}", ret))
+                bail!("Custom op failed with code {}", ret)
             }
         },
     );
 
-    register_binary_op(dtype, kind_enum, device, op).map_err(|e| PyRuntimeError::new_err(e))
+    register_binary_op(dtype, kind_enum, device, op)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
 #[pyfunction]

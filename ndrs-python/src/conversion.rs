@@ -88,11 +88,11 @@ pub fn tensor_numpy_impl(view: &ArcTensorView, py: Python) -> PyResult<Py<PyAny>
         view.shape().to_vec(),
         view.dtype(),
     )
-    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let out_handle = out_tensor.into_arc();
     let mut out_view = ArcTensorView::new(out_handle);
     view.contiguous(&mut out_view)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let tensor_contig = out_view.into_handle();
     let tensor_contig_ref = tensor_contig.0.lock().unwrap();
     let bytes = tensor_contig_ref
@@ -138,10 +138,10 @@ pub fn tensor_to_impl(view: &ArcTensorView, device: &str) -> PyResult<PyTensor> 
         view.shape().to_vec(),
         view.dtype(),
     )
-    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let out_handle = out_tensor.into_arc();
     let mut out_view = ArcTensorView::new(out_handle);
     view.to(&mut out_view, target)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     Ok(PyTensor::from_view(out_view))
 }

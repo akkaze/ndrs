@@ -1,7 +1,7 @@
-//! Tensor 句柄类型定义（RcTensor, ArcTensor）及基础方法
-
+/// Tensor 句柄类型定义（RcTensor, ArcTensor）及基础方法
 use super::Tensor;
 use crate::{DType, Device};
+use anyhow::{Context, Result, anyhow, bail};
 use parking_lot::ReentrantMutex;
 use std::cell::RefCell;
 use std::rc::Rc;

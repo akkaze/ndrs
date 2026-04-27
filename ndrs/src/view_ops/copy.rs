@@ -1,14 +1,14 @@
-//! 拷贝与连续化方法宏
+use anyhow::{Context, Result, anyhow, bail};
+/// 拷贝与连续化方法宏
 
 #[macro_export]
 macro_rules! impl_strided_copy_to {
     ($view_type:ident, $handle:ty) => {
-        fn strided_copy_to(&self, dst: &mut Self) -> Result<(), String> {
+        fn strided_copy_to(&self, dst: &mut Self) -> anyhow::Result<()> {
+            use anyhow::{Context, bail};
+
             if self.shape != dst.shape {
-                return Err(format!(
-                    "Shape mismatch: self {:?}, dst {:?}",
-                    self.shape, dst.shape
-                ));
+                bail!("Shape mismatch: self {:?}, dst {:?}", self.shape, dst.shape);
             }
             let src_cell = self.handle.lock();
             let src_tensor = src_cell.borrow();
@@ -16,16 +16,16 @@ macro_rules! impl_strided_copy_to {
             let mut dst_tensor = dst_cell.borrow_mut();
 
             if src_tensor.dtype() != dst_tensor.dtype() {
-                return Err("Dtype mismatch".into());
+                bail!("Dtype mismatch");
             }
             if src_tensor.device() != dst_tensor.device() {
-                return Err("Device mismatch".into());
+                bail!("Device mismatch");
             }
             let total_elements = self.shape.iter().product::<usize>();
             let elem_size = get_dtype_info(src_tensor.dtype()).unwrap().size;
             match src_tensor.device() {
                 Device::Cpu => unsafe {
-                    cpu_strided_copy(
+                    $crate::kernel::cpu_strided_copy(
                         src_tensor.data_ptr(None),
                         self.offset,
                         self.strides.as_ptr(),
@@ -39,24 +39,24 @@ macro_rules! impl_strided_copy_to {
                     );
                 },
                 Device::Cuda(_) => {
-                    let stream = cuda::get_stream().map_err(|e| e.to_string())?;
+                    let stream = $crate::cuda::get_stream().context("Failed to get CUDA stream")?;
                     let shape_dev = stream
                         .inner()
                         .clone_htod(&self.shape)
-                        .map_err(|e| e.to_string())?;
+                        .context("Failed to copy shape to device")?;
                     let src_strides_dev = stream
                         .inner()
                         .clone_htod(&self.strides)
-                        .map_err(|e| e.to_string())?;
+                        .context("Failed to copy src strides to device")?;
                     let dst_strides_dev = stream
                         .inner()
                         .clone_htod(&dst.strides)
-                        .map_err(|e| e.to_string())?;
+                        .context("Failed to copy dst strides to device")?;
                     let src_bytes = src_tensor.data_ptr(Some(stream.inner()));
                     let dst_bytes = dst_tensor.data_mut_ptr(Some(stream.inner()));
                     let stream_ptr = stream.as_ptr();
                     unsafe {
-                        let err = gpu_strided_copy(
+                        let err = $crate::kernel::gpu_strided_copy(
                             src_bytes,
                             self.offset,
                             src_strides_dev.device_ptr(stream.inner()).0 as *const usize,
@@ -70,7 +70,7 @@ macro_rules! impl_strided_copy_to {
                             stream_ptr,
                         );
                         if err != 0 {
-                            return Err(format!("GPU strided copy failed: {}", err));
+                            bail!("GPU strided copy failed: {}", err);
                         }
                     }
                 }
@@ -83,18 +83,30 @@ macro_rules! impl_strided_copy_to {
 #[macro_export]
 macro_rules! impl_contiguous {
     ($view_type:ident, $handle:ty) => {
-        fn contiguous(&self, out: &mut Self) -> Result<(), String> {
+        fn contiguous_into(&self, out: &mut Self) -> anyhow::Result<()> {
+            use anyhow::bail;
+
             if out.shape != self.shape {
-                return Err("Output shape mismatch".into());
+                bail!("Output shape mismatch");
             }
             if !out.handle.lock().borrow().is_contiguous() {
-                return Err("Output must be contiguous".into());
+                bail!("Output must be contiguous");
             }
             self.strided_copy_to(out)
         }
+
+        fn contiguous(&self) -> anyhow::Result<Self::Handle> {
+            let out_tensor = $crate::tensor::Tensor::new_contiguous(
+                self.shape().to_vec(),
+                self.dtype(),
+                self.device(),
+            )?;
+            let mut out_view = Self::new(<$handle>::from_tensor(out_tensor));
+            self.contiguous_into(&mut out_view)?;
+            Ok(out_view.into_handle())
+        }
     };
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

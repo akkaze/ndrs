@@ -1,3 +1,4 @@
+use anyhow::{Context, Result, anyhow, bail};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -63,14 +64,18 @@ impl Event {
         self.inner.done()
     }
 
-    pub fn elapsed_since(&self, earlier: &Self) -> Result<Duration, String> {
-        let t1 = self.inner.timestamp().ok_or("Event not completed")?;
+    pub fn elapsed_since(&self, earlier: &Self) -> anyhow::Result<std::time::Duration> {
+        use anyhow::{anyhow, bail};
+        let t1 = self
+            .inner
+            .timestamp()
+            .ok_or_else(|| anyhow!("Event not completed"))?;
         let t2 = earlier
             .inner
             .timestamp()
-            .ok_or("Earlier event not completed")?;
+            .ok_or_else(|| anyhow!("Earlier event not completed"))?;
         if t1 < t2 {
-            return Err("Current event occurred before earlier event".into());
+            bail!("Current event occurred before earlier event");
         }
         Ok(t1 - t2)
     }

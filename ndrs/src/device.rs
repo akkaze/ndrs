@@ -1,3 +1,4 @@
+use anyhow::{Result, bail};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,17 +26,15 @@ impl std::fmt::Display for Device {
 }
 
 impl FromStr for Device {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
         if s == "cpu" {
             Ok(Device::Cpu)
         } else if let Some(stripped) = s.strip_prefix("cuda:") {
-            let idx = stripped
-                .parse::<usize>()
-                .map_err(|_| format!("Invalid cuda index: {}", stripped))?;
+            let idx = stripped.parse::<usize>()?;
             Ok(Device::Cuda(idx))
         } else {
-            Err(format!("Unknown device specifier: {}", s))
+            bail!("Unknown device specifier: {}", s)
         }
     }
 }

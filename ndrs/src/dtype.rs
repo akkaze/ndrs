@@ -1,3 +1,4 @@
+use anyhow::{Context, Result, anyhow, bail};
 // ndrs/src/dtype.rs
 use crate::device::Device;
 use crate::kernel::*;
@@ -56,7 +57,7 @@ pub type BinaryOpFn = Arc<
             usize,
             Device,
             Option<*mut std::ffi::c_void>,
-        ) -> Result<(), String>
+        ) -> anyhow::Result<()>
         + Send
         + Sync,
 >;
@@ -93,7 +94,7 @@ impl TypeRegistry {
         kind: BinaryOpKind,
         device: Device,
         op: BinaryOpFn,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         let mut inner = self.0.write().unwrap();
         inner.binary_ops.insert((dtype, kind, device), op);
         Ok(())
@@ -182,7 +183,7 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
                     stream.unwrap(),
                 );
                 if err != 0 {
-                    return Err(format!("GPU add failed: {}", err));
+                    return bail!("GPU add failed: {}", err);
                 }
             }
             Ok(())
@@ -239,7 +240,7 @@ pub static TYPE_REGISTRY: Lazy<TypeRegistry> = Lazy::new(|| {
                     stream.unwrap(),
                 );
                 if err != 0 {
-                    return Err(format!("GPU add failed: {}", err));
+                    return bail!("GPU add failed: {}", err);
                 }
             }
             Ok(())
@@ -261,7 +262,7 @@ pub fn register_binary_op(
     kind: BinaryOpKind,
     device: Device,
     op: BinaryOpFn,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     TYPE_REGISTRY.register_binary_op(dtype, kind, device, op)
 }
 

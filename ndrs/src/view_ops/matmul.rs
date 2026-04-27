@@ -1,22 +1,25 @@
-//! 矩阵乘法方法宏
+use anyhow::{Context, Result, anyhow, bail};
+/// 矩阵乘法方法宏
 
 #[macro_export]
-macro_rules! impl_matmul_with_out {
+macro_rules! impl_matmul_into {
     ($view_type:ident, $handle:ty) => {
-        fn matmul_with_out(&self, other: &Self, out: &mut Self) -> Result<(), String> {
+        fn matmul_into(&self, other: &Self, out: &mut Self) -> anyhow::Result<()> {
+            use anyhow::{Context, bail};
+
             let shape_self = self.shape();
             let shape_other = other.shape();
             let shape_out = out.shape();
             if shape_self.len() != 2 || shape_other.len() != 2 || shape_out.len() != 2 {
-                return Err("matmul only supports 2D tensors".into());
+                bail!("matmul only supports 2D tensors");
             }
             let (m, k1) = (shape_self[0], shape_self[1]);
             let (k2, n) = (shape_other[0], shape_other[1]);
             if k1 != k2 {
-                return Err("Inner dimensions must match".into());
+                bail!("Inner dimensions must match");
             }
             if shape_out != &[m, n] {
-                return Err("Output shape must be [M, N]".into());
+                bail!("Output shape must be [M, N]");
             }
             let a_cell = self.handle.lock();
             let a_t = a_cell.borrow();
@@ -25,10 +28,10 @@ macro_rules! impl_matmul_with_out {
             let c_cell = out.handle.lock();
             let mut c_t = c_cell.borrow_mut();
             if a_t.dtype() != b_t.dtype() || a_t.dtype() != c_t.dtype() {
-                return Err("Dtype mismatch".into());
+                bail!("Dtype mismatch");
             }
             if a_t.dtype() != $crate::DTYPE_FLOAT32 {
-                return Err("matmul only supports f32 for now".into());
+                bail!("matmul only supports f32 for now");
             }
             let a_strides = self.strides();
             let b_strides = other.strides();
@@ -60,7 +63,7 @@ macro_rules! impl_matmul_with_out {
                     );
                 },
                 $crate::device::Device::Cuda(_) => {
-                    let stream = cuda::get_stream().map_err(|e| e.to_string())?;
+                    let stream = $crate::cuda::get_stream().context("Failed to get CUDA stream")?;
                     let stream_ptr = stream.as_ptr();
                     unsafe {
                         let err = $crate::kernel::gpu_matmul_strided_f32(
@@ -79,7 +82,7 @@ macro_rules! impl_matmul_with_out {
                             stream_ptr,
                         );
                         if err != 0 {
-                            return Err(format!("GPU matmul failed with error {}", err));
+                            bail!("GPU matmul failed with error {}", err);
                         }
                     }
                 }
@@ -92,12 +95,13 @@ macro_rules! impl_matmul_with_out {
 #[macro_export]
 macro_rules! impl_matmul {
     ($view_type:ident, $handle:ty) => {
-        fn matmul(&self, other: &Self) -> Result<Self, String> {
+        fn matmul(&self, other: &Self) -> anyhow::Result<Self> {
             let m = self.shape()[0];
             let n = other.shape()[1];
-            let out_tensor = $crate::tensor::Tensor::new_contiguous(vec![m, n], self.dtype())?;
+            let out_tensor =
+                $crate::tensor::Tensor::new_contiguous(vec![m, n], self.dtype(), self.device())?;
             let mut out_view = Self::new(<$handle>::from_tensor(out_tensor));
-            self.matmul_with_out(other, &mut out_view)?;
+            self.matmul_into(other, &mut out_view)?;
             Ok(out_view)
         }
     };

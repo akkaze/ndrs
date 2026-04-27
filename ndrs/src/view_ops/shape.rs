@@ -1,11 +1,14 @@
-//! 形状操作方法宏（每个宏生成一个方法定义）
+use anyhow::{Context, Result, anyhow, bail};
+/// 形状操作方法宏（每个宏生成一个方法定义）
 
 #[macro_export]
 macro_rules! impl_broadcast_to {
     ($view_type:ident, $handle:ty) => {
-        fn broadcast_to(&self, target_shape: &[usize]) -> Result<Self, String> {
+        fn broadcast_to(&self, target_shape: &[usize]) -> anyhow::Result<Self> {
+            use anyhow::bail;
+
             if self.shape.len() > target_shape.len() {
-                return Err("Cannot broadcast to fewer dimensions".into());
+                bail!("Cannot broadcast to fewer dimensions");
             }
             let mut new_strides = vec![0; target_shape.len()];
             let offset = target_shape.len() - self.shape.len();
@@ -17,7 +20,7 @@ macro_rules! impl_broadcast_to {
                 } else if self_dim == 1 {
                     new_strides[offset + i] = 0;
                 } else {
-                    return Err(format!("Cannot broadcast dim {}", i));
+                    bail!("Cannot broadcast dim {}", i);
                 }
             }
             for i in 0..offset {
@@ -31,16 +34,18 @@ macro_rules! impl_broadcast_to {
 #[macro_export]
 macro_rules! impl_transpose {
     ($view_type:ident, $handle:ty) => {
-        fn transpose(&self, axes: &[usize]) -> Result<Self, String> {
+        fn transpose(&self, axes: &[usize]) -> anyhow::Result<Self> {
+            use anyhow::bail;
+
             if axes.len() != self.shape.len() {
-                return Err("Axes length mismatch".into());
+                bail!("Axes length mismatch");
             }
             let mut new_shape = Vec::with_capacity(self.shape.len());
             let mut new_strides = Vec::with_capacity(self.shape.len());
             let mut used = vec![false; self.shape.len()];
             for &axis in axes {
                 if axis >= self.shape.len() || used[axis] {
-                    return Err("Invalid or repeated axis".into());
+                    bail!("Invalid or repeated axis");
                 }
                 used[axis] = true;
                 new_shape.push(self.shape[axis]);
@@ -54,14 +59,17 @@ macro_rules! impl_transpose {
 #[macro_export]
 macro_rules! impl_slice {
     ($view_type:ident, $handle:ty) => {
-        fn slice(&self, info: &$crate::view::SliceInfo) -> Result<Self, String> {
+        fn slice(&self, info: &$crate::view::SliceInfo) -> anyhow::Result<Self> {
+            use anyhow::bail;
+            use $crate::view::SliceArg;
+
             let slices = info.args();
             let mut new_offset = self.offset;
             let mut new_shape = Vec::with_capacity(slices.len());
             let mut new_strides = Vec::with_capacity(slices.len());
             for (dim, slice) in slices.iter().enumerate() {
                 if dim >= self.shape.len() {
-                    return Err("Too many slice dimensions".into());
+                    bail!("Too many slice dimensions");
                 }
                 let dim_size = self.shape[dim];
                 let dim_stride = self.strides[dim];
@@ -73,7 +81,7 @@ macro_rules! impl_slice {
                             (dim_size as i32 + idx) as usize
                         };
                         if idx >= dim_size {
-                            return Err("Index out of bounds".into());
+                            bail!("Index out of bounds");
                         }
                         new_offset += idx * dim_stride;
                     }
@@ -89,7 +97,7 @@ macro_rules! impl_slice {
                             (dim_size as i32 + end) as usize
                         };
                         if start >= end || start >= dim_size {
-                            return Err("Range out of bounds".into());
+                            bail!("Range out of bounds");
                         }
                         let len = (end - start + (*step as usize) - 1) / (*step as usize);
                         new_shape.push(len);
@@ -108,7 +116,7 @@ macro_rules! impl_slice {
                             (dim_size as i32 + end) as usize
                         };
                         if start > end || start >= dim_size {
-                            return Err("RangeInclusive out of bounds".into());
+                            bail!("RangeInclusive out of bounds");
                         }
                         let len = end - start + 1;
                         new_shape.push(len);
@@ -122,7 +130,7 @@ macro_rules! impl_slice {
                             (dim_size as i32 + start) as usize
                         };
                         if start >= dim_size {
-                            return Err("From out of bounds".into());
+                            bail!("From out of bounds");
                         }
                         let len = dim_size - start;
                         new_shape.push(len);
@@ -147,21 +155,23 @@ macro_rules! impl_slice {
 #[macro_export]
 macro_rules! impl_concat_split {
     ($view_type:ident, $handle:ty) => {
-        fn concat_with_out(views: &[&Self], axis: usize, out: &mut Self) -> Result<(), String> {
+        fn concat_into(views: &[&Self], axis: usize, out: &mut Self) -> anyhow::Result<()> {
+            use anyhow::bail;
+
             if views.is_empty() {
-                return Err("No views to concatenate".into());
+                bail!("No views to concatenate");
             }
             let first_shape = views[0].shape();
             if axis >= first_shape.len() {
-                return Err("Axis out of bounds".into());
+                bail!("Axis out of bounds");
             }
             for v in views {
                 if v.shape().len() != first_shape.len() {
-                    return Err("All views must have same number of dimensions".into());
+                    bail!("All views must have same number of dimensions");
                 }
                 for d in 0..first_shape.len() {
                     if d != axis && v.shape()[d] != first_shape[d] {
-                        return Err("All views must have same shape except on concat axis".into());
+                        bail!("All views must have same shape except on concat axis");
                     }
                 }
             }
@@ -169,7 +179,7 @@ macro_rules! impl_concat_split {
             let mut expected_shape = first_shape.to_vec();
             expected_shape[axis] = total_len;
             if out.shape() != expected_shape {
-                return Err("Output shape does not match concatenated shape".into());
+                bail!("Output shape does not match concatenated shape");
             }
             let mut offset = 0;
             for view in views {
@@ -184,18 +194,20 @@ macro_rules! impl_concat_split {
             Ok(())
         }
 
-        fn split_with_outs(
+        fn split_into(
             &self,
             sizes: &[usize],
             axis: usize,
             out_views: &mut [Self],
-        ) -> Result<(), String> {
+        ) -> anyhow::Result<()> {
+            use anyhow::bail;
+
             if sizes.len() != out_views.len() {
-                return Err("Number of sizes does not match number of output views".into());
+                bail!("Number of sizes does not match number of output views");
             }
             let total: usize = sizes.iter().sum();
             if self.shape()[axis] != total {
-                return Err("Sum of sizes does not equal source size on axis".into());
+                bail!("Sum of sizes does not equal source size on axis");
             }
             let mut offset = 0;
             for (i, (&size, out_view)) in sizes.iter().zip(out_views.iter_mut()).enumerate() {
@@ -205,7 +217,7 @@ macro_rules! impl_concat_split {
                     shape
                 };
                 if out_view.shape() != expected_shape {
-                    return Err(format!("Output view {} shape mismatch", i));
+                    bail!("Output view {} shape mismatch", i);
                 }
                 let mut slices = vec![$crate::view::SliceArg::All; self.shape().len()];
                 slices[axis] =
@@ -217,33 +229,40 @@ macro_rules! impl_concat_split {
             Ok(())
         }
 
-        fn concat(views: &[&Self], axis: usize) -> Result<Self, String> {
+        fn concat(views: &[&Self], axis: usize) -> anyhow::Result<Self> {
             if views.is_empty() {
-                return Err("No views to concatenate".into());
+                return Err(anyhow::anyhow!("No views to concatenate"));
             }
             let first_shape = views[0].shape();
             let total_len: usize = views.iter().map(|v| v.shape()[axis]).sum();
             let mut out_shape = first_shape.to_vec();
             out_shape[axis] = total_len;
-            let out_tensor = $crate::tensor::Tensor::new_contiguous(out_shape, views[0].dtype())?;
+            let out_tensor = $crate::tensor::Tensor::new_contiguous(
+                out_shape,
+                views[0].dtype(),
+                views[0].device(),
+            )?;
             let mut out_view = Self::new(<$handle>::from_tensor(out_tensor));
-            Self::concat_with_out(views, axis, &mut out_view)?;
+            Self::concat_into(views, axis, &mut out_view)?;
             Ok(out_view)
         }
 
-        fn split(&self, sizes: &[usize], axis: usize) -> Result<Vec<Self>, String> {
+        fn split(&self, sizes: &[usize], axis: usize) -> anyhow::Result<Vec<Self>> {
             let total: usize = sizes.iter().sum();
             if self.shape()[axis] != total {
-                return Err("Sum of sizes does not equal source size on axis".into());
+                return Err(anyhow::anyhow!(
+                    "Sum of sizes does not equal source size on axis"
+                ));
             }
             let mut out_views = Vec::with_capacity(sizes.len());
             for &size in sizes {
                 let mut shape = self.shape().to_vec();
                 shape[axis] = size;
-                let out_tensor = $crate::tensor::Tensor::new_contiguous(shape, self.dtype())?;
+                let out_tensor =
+                    $crate::tensor::Tensor::new_contiguous(shape, self.dtype(), self.device())?;
                 out_views.push(Self::new(<$handle>::from_tensor(out_tensor)));
             }
-            self.split_with_outs(sizes, axis, &mut out_views)?;
+            self.split_into(sizes, axis, &mut out_views)?;
             Ok(out_views)
         }
     };

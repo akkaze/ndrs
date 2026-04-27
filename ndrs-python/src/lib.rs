@@ -3,6 +3,10 @@ use pyo3::prelude::*;
 
 mod register;
 mod tensor;
+mod view;
+
+use tensor::PyTensor;
+use view::PyTensorView;
 
 fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("DTYPE_FLOAT32", DTYPE_FLOAT32)?;
@@ -17,7 +21,8 @@ fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[pymodule]
 fn _ndrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // 注册 tensor 类
-    tensor::register(m)?;
+    m.add_class::<PyTensor>()?;
+    m.add_class::<PyTensorView>()?;
     // 添加注册函数
     m.add_function(wrap_pyfunction!(register::register_dtype_py, m)?)?;
     m.add_function(wrap_pyfunction!(register::register_binary_op_raw, m)?)?;

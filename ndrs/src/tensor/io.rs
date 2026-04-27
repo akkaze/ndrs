@@ -1,5 +1,5 @@
-//! Tensor I/O: Loading and saving from/to NumPy .npy files using npyz.
-
+use anyhow::{Context, Result, anyhow, bail};
+/// Tensor I/O: Loading and saving from/to NumPy .npy files using npyz.
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
@@ -13,44 +13,40 @@ use crate::dtype::{DTYPE_FLOAT32, DTYPE_INT32};
 use crate::tensor::{RcTensor, Tensor};
 
 /// Load a Tensor from a .npy file.
-pub fn load_npy<P: AsRef<Path>>(path: P) -> Result<Tensor, String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
+pub fn load_npy<P: AsRef<Path>>(path: P) -> anyhow::Result<Tensor> {
+    let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let npy = NpyFile::new(reader).map_err(|e| format!("Failed to read npy: {}", e))?;
+    let npy = NpyFile::new(reader)?;
 
     let shape: Vec<usize> = npy.shape().iter().map(|&d| d as usize).collect();
 
     let dtype_str = match npy.dtype() {
         DType::Plain(ts) => ts.to_string(),
-        _ => return Err("Only plain dtypes are supported".into()),
+        _ => bail!("Only plain dtypes are supported"),
     };
 
     if dtype_str == "<f4" || dtype_str == ">f4" || dtype_str == "|f4" {
-        let data: Vec<f32> = npy
-            .into_vec()
-            .map_err(|e| format!("Failed to read f32: {}", e))?;
-        Tensor::from_vec(data, shape).map_err(|e| e.to_string())
+        let data: Vec<f32> = npy.into_vec()?;
+        Tensor::from_vec(data, shape, Device::Cpu)
     } else if dtype_str == "<i4" || dtype_str == ">i4" || dtype_str == "|i4" {
-        let data: Vec<i32> = npy
-            .into_vec()
-            .map_err(|e| format!("Failed to read i32: {}", e))?;
-        Tensor::from_vec(data, shape).map_err(|e| e.to_string())
+        let data: Vec<i32> = npy.into_vec()?;
+        Tensor::from_vec(data, shape, Device::Cpu)
     } else {
-        Err(format!("Unsupported dtype: {}", dtype_str))
+        bail!("Unsupported dtype: {}", dtype_str)
     }
 }
 
 /// Save a Tensor to a .npy file. The tensor must be on CPU and contiguous.
-pub fn save_npy<P: AsRef<Path>>(tensor: &Tensor, path: P) -> Result<(), String> {
+pub fn save_npy<P: AsRef<Path>>(tensor: &Tensor, path: P) -> anyhow::Result<()> {
     if tensor.device() != Device::Cpu {
-        return Err("save_npy only supports CPU tensors".into());
+        bail!("save_npy only supports CPU tensors");
     }
     if !tensor.is_contiguous() {
-        return Err("save_npy requires contiguous tensor".into());
+        bail!("save_npy requires contiguous tensor");
     }
 
     let shape: Vec<u64> = tensor.shape().iter().map(|&d| d as u64).collect();
-    let file = File::create(path).map_err(|e| e.to_string())?;
+    let file = File::create(path)?;
     let writer = BufWriter::new(file);
 
     match tensor.dtype() {
@@ -61,19 +57,15 @@ pub fn save_npy<P: AsRef<Path>>(tensor: &Tensor, path: P) -> Result<(), String> 
                     tensor.size(),
                 )
             };
-            let type_str =
-                TypeStr::from_str("<f4").map_err(|e| format!("Invalid type string: {}", e))?;
+            let type_str = TypeStr::from_str("<f4")?;
             let dtype = DType::Plain(type_str);
             let mut w = WriteOptions::new()
                 .dtype(dtype)
                 .shape(&shape)
                 .writer(writer)
-                .begin_nd()
-                .map_err(|e| format!("Failed to start writer: {}", e))?;
-            w.extend(slice)
-                .map_err(|e| format!("Failed to write data: {}", e))?;
-            w.finish()
-                .map_err(|e| format!("Failed to finalize: {}", e))?;
+                .begin_nd()?;
+            w.extend(slice)?;
+            w.finish()?;
         }
         DTYPE_INT32 => {
             let slice = unsafe {
@@ -82,21 +74,17 @@ pub fn save_npy<P: AsRef<Path>>(tensor: &Tensor, path: P) -> Result<(), String> 
                     tensor.size(),
                 )
             };
-            let type_str =
-                TypeStr::from_str("<i4").map_err(|e| format!("Invalid type string: {}", e))?;
+            let type_str = TypeStr::from_str("<i4")?;
             let dtype = DType::Plain(type_str);
             let mut w = WriteOptions::new()
                 .dtype(dtype)
                 .shape(&shape)
                 .writer(writer)
-                .begin_nd()
-                .map_err(|e| format!("Failed to start writer: {}", e))?;
-            w.extend(slice)
-                .map_err(|e| format!("Failed to write data: {}", e))?;
-            w.finish()
-                .map_err(|e| format!("Failed to finalize: {}", e))?;
+                .begin_nd()?;
+            w.extend(slice)?;
+            w.finish()?;
         }
-        _ => return Err(format!("Unsupported dtype: {}", tensor.dtype())),
+        _ => return bail!("Unsupported dtype: {}", tensor.dtype()),
     }
     Ok(())
 }

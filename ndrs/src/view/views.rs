@@ -1,4 +1,4 @@
-//! 具体视图类型：RcTensorView 和 ArcTensorView
+/// 具体视图类型：RcTensorView 和 ArcTensorView
 use super::slice::{SliceArg, SliceInfo};
 use super::trait_def::TensorViewOps;
 use crate::Device;
@@ -7,7 +7,9 @@ use crate::cuda::Stream;
 use crate::dtype::{DType, get_dtype_info};
 use crate::kernel::*;
 use crate::tensor::{ArcTensor, DataPtr, RcTensor, Tensor};
-use cudarc::driver::DevicePtr;
+use anyhow::{Context, Result, anyhow, bail};
+#[cfg(feature = "cuda")]
+use cudarc::driver::{CudaSlice, CudaView, CudaViewMut, DevicePtr};
 use parking_lot::ReentrantMutexGuard;
 use std::cell::RefCell;
 use std::cell::{Ref, RefMut};
@@ -76,11 +78,11 @@ macro_rules! impl_tensor_view {
                 &self.handle
             }
 
-            fn create_output(&self) -> Result<Self, String> {
+            fn create_output(&self) -> anyhow::Result<Self> {
                 self.create_output_on_device(self.device)
             }
 
-            fn create_output_on_device(&self, device: Device) -> Result<Self, String> {
+            fn create_output_on_device(&self, device: Device) -> anyhow::Result<Self> {
                 let elem_size = get_dtype_info(self.dtype).unwrap().size;
                 let total_bytes = self.size() * elem_size;
                 let shape = self.shape().to_vec();
@@ -89,20 +91,23 @@ macro_rules! impl_tensor_view {
                 let new_tensor = match device {
                     Device::Cpu => {
                         let bytes = vec![0u8; total_bytes].into_boxed_slice();
-                        Tensor::new_cpu_from_bytes(bytes, shape, dtype)?
+                        Tensor::new_cpu_from_bytes(bytes, shape, dtype)
+                            .context("Failed to create CPU tensor")?
                     }
                     Device::Cuda(dev_id) => {
-                        let stream = cuda::get_stream().map_err(|e| e.to_string())?;
+                        let stream =
+                            $crate::cuda::get_stream().context("Failed to get CUDA stream")?;
                         if stream.device_id != dev_id {
-                            return Err(format!(
+                            bail!(
                                 "Stream device {} does not match target device {}",
-                                stream.device_id, dev_id
-                            ));
+                                stream.device_id,
+                                dev_id
+                            );
                         }
                         let gpu_mem = stream
                             .inner()
                             .alloc_zeros::<u8>(total_bytes)
-                            .map_err(|e| e.to_string())?;
+                            .context("Failed to allocate GPU memory")?;
                         let strides = Tensor::compute_row_major_strides(&shape, elem_size);
                         Tensor {
                             data: DataPtr::Gpu(gpu_mem),
@@ -113,7 +118,7 @@ macro_rules! impl_tensor_view {
                         }
                     }
                 };
-                Ok($name::new(<$handle>::from_tensor(new_tensor))) // 使用 from_tensor
+                Ok(Self::new(<$handle>::from_tensor(new_tensor)))
             }
         }
 
@@ -163,11 +168,65 @@ macro_rules! impl_tensor_view {
                 self.shape.iter().product()
             }
 
-            fn assign(&mut self, src: &Self) -> Result<(), String> {
+            fn device(&self) -> Device {
+                self.device
+            }
+
+            fn assign(&mut self, src: &Self) -> anyhow::Result<()> {
                 if self.shape != src.shape {
-                    return Err("Shape mismatch".into());
+                    bail!("Shape mismatch");
                 }
                 src.strided_copy_to(self)
+            }
+
+            /// 获取 GPU 切片（只读），视图偏移量由内核参数 strides 和 offset 处理。
+            #[cfg(feature = "cuda")]
+            unsafe fn as_gpu_slice(&self) -> &CudaSlice<u8> {
+                let cell = self.handle.lock();
+                let tensor = cell.borrow();
+                let slice = tensor.as_gpu_slice().expect("Not on GPU");
+                // 安全：slice 的生命周期被延长，因为 cell 在函数结束时被丢，
+                // 但 slice 实际指向的 GPU 内存由 handle 持有，不会失效。
+                // 调用者必须保证在 slice 使用期间 handle 未被释放。
+                std::mem::transmute(slice)
+            }
+
+            /// 获取 GPU 切片（可变）。
+            #[cfg(feature = "cuda")]
+            unsafe fn as_gpu_slice_mut(&mut self) -> &mut CudaSlice<u8> {
+                let cell = self.handle.lock();
+                let mut tensor = cell.borrow_mut();
+                let slice = tensor.as_gpu_slice_mut().expect("Not on GPU");
+                std::mem::transmute(slice)
+            }
+
+            #[cfg(feature = "cuda")]
+            unsafe fn as_gpu_view(&self) -> CudaView<'_, u8> {
+                let cell = self.handle.lock();
+                let tensor = cell.borrow();
+                let base_slice = tensor.as_gpu_slice().expect("Not on GPU");
+                let offset = self.offset(); // 已是字节偏移
+                let len = self.num_bytes(); // 使用 num_bytes 获取实际字节数
+                let view = base_slice.slice(offset..);
+                std::mem::transmute(view)
+            }
+
+            #[cfg(feature = "cuda")]
+            unsafe fn as_gpu_view_mut(&self) -> CudaViewMut<'_, u8> {
+                let cell = self.handle.lock();
+                let mut tensor = cell.borrow_mut();
+                let base_slice = tensor.as_gpu_slice_mut().expect("Not on GPU");
+                let offset = self.offset();
+                let len = self.num_bytes();
+                let view = base_slice.slice_mut(offset..);
+                std::mem::transmute(view)
+            }
+
+            unsafe fn raw_data_ptr(&self) -> *mut u8 {
+                let cell = self.handle.lock();
+                let tensor = cell.borrow();
+                let base_ptr = tensor.data_ptr(None);
+                (base_ptr as *mut u8).add(self.offset())
             }
 
             // 直接调用不带参数的辅助宏，这些宏内部使用 handle.lock() 和 <$handle>::from_tensor
@@ -178,8 +237,9 @@ macro_rules! impl_tensor_view {
             $crate::impl_concat_split!($name, $handle);
             $crate::impl_strided_copy_to!($name, $handle);
             $crate::impl_contiguous!($name, $handle);
-            $crate::impl_matmul_with_out!($name, $handle);
+            $crate::impl_matmul_into!($name, $handle);
             $crate::impl_matmul!($name, $handle);
+            $crate::impl_fill!($name, $handle);
         }
 
         // 加法宏也不再需要额外参数
@@ -215,6 +275,18 @@ pub fn rc_view_to_vec_f32(view: &RcTensorView) -> Vec<f32> {
 }
 pub fn arc_view_to_vec_f32(view: &ArcTensorView) -> Vec<f32> {
     arc_view_to_vec(view)
+}
+
+impl RcTensorView {
+    pub fn lock(&self) -> &RefCell<Tensor> {
+        &self.handle.0
+    }
+}
+
+impl ArcTensorView {
+    pub fn lock(&self) -> parking_lot::ReentrantMutexGuard<RefCell<Tensor>> {
+        self.handle.0.lock()
+    }
 }
 
 #[cfg(test)]
@@ -262,7 +334,7 @@ mod tests {
         .unwrap();
         let out_handle = out_tensor.into_rc();
         let mut out_view = RcTensorView::new(out_handle);
-        transposed.contiguous(&mut out_view).unwrap();
+        transposed.contiguous_into(&mut out_view).unwrap();
         assert_eq!(
             rc_view_to_vec_f32(&out_view),
             vec![0.0, 3.0, 1.0, 4.0, 2.0, 5.0]
@@ -282,7 +354,7 @@ mod tests {
         .unwrap();
         let out_handle = out_tensor.into_arc();
         let mut out_view = ArcTensorView::new(out_handle);
-        transposed.contiguous(&mut out_view).unwrap();
+        transposed.contiguous_into(&mut out_view).unwrap();
         assert_eq!(
             arc_view_to_vec_f32(&out_view),
             vec![0.0, 3.0, 1.0, 4.0, 2.0, 5.0]
@@ -318,7 +390,7 @@ mod tests {
         let b_gpu = b_cpu.into_arc().as_view().to_gpu(0).unwrap();
 
         // 创建输出张量（全零） - 需要两个独立的零张量，因为 into_arc 消耗所有权
-        let zero_cpu1 = Tensor::new_contiguous(vec![2], DTYPE_FLOAT32).unwrap();
+        let zero_cpu1 = Tensor::new_contiguous(vec![2], DTYPE_FLOAT32, Device::Cpu).unwrap();
         let mut out_gpu = zero_cpu1.into_arc().as_view().to_gpu(0).unwrap();
 
         // 异步加法（使用默认流）
@@ -328,7 +400,7 @@ mod tests {
         stream2.wait_event(&event).unwrap();
 
         // 第二个输出张量
-        let zero_cpu2 = Tensor::new_contiguous(vec![2], DTYPE_FLOAT32).unwrap();
+        let zero_cpu2 = Tensor::new_contiguous(vec![2], DTYPE_FLOAT32, Device::Cpu).unwrap();
         let mut out2_gpu = zero_cpu2.into_arc().as_view().to_gpu(0).unwrap();
         ArcTensorView::add(&out_gpu, &out_gpu, &mut out2_gpu).unwrap();
 
@@ -358,7 +430,7 @@ mod tests {
         let b_gpu = b_view.to_gpu(1).unwrap();
 
         // 不能直接跨设备加法，应该报错
-        let zero_cpu = Tensor::new_contiguous(vec![2], DTYPE_FLOAT32).unwrap();
+        let zero_cpu = Tensor::new_contiguous(vec![2], DTYPE_FLOAT32, Device::Cpu).unwrap();
         let mut out_gpu = zero_cpu.into_arc().as_view().to_gpu(0).unwrap();
         let result = ArcTensorView::add(&a_gpu, &b_gpu, &mut out_gpu);
         assert!(result.is_err());
@@ -384,7 +456,7 @@ mod tests {
         let b = Tensor::new_cpu_from_f32(vec![2.0; size], shape.clone());
         let a_gpu = a.into_arc().as_view().to_gpu(0).unwrap();
         let b_gpu = b.into_arc().as_view().to_gpu(0).unwrap();
-        let mut out1 = Tensor::new_contiguous(shape.clone(), DTYPE_FLOAT32)
+        let mut out1 = Tensor::new_contiguous(shape.clone(), DTYPE_FLOAT32, Device::Cpu)
             .unwrap()
             .into_arc()
             .as_view()
@@ -399,7 +471,7 @@ mod tests {
         cuda::set_stream(stream2.clone()).unwrap();
         stream2.wait_event(&event).unwrap();
 
-        let mut out2 = Tensor::new_contiguous(shape, DTYPE_FLOAT32)
+        let mut out2 = Tensor::new_contiguous(shape, DTYPE_FLOAT32, Device::Cpu)
             .unwrap()
             .into_arc()
             .as_view()

@@ -1,8 +1,11 @@
-//! 为 Tensor 句柄提供运算符支持（通过新类型包装）
-
+pub mod conversion;
+pub mod creation;
+/// 为 Tensor 句柄提供运算符支持（通过新类型包装）
 use super::Tensor;
 use super::handle::{ArcTensor, RcTensor};
+use crate::dtype::DTypeMapping;
 use crate::view::{ArcTensorView, AsView, RcTensorView, TensorViewOps};
+use anyhow::{Context, Result, anyhow, bail};
 use std::ops::{Add, AddAssign};
 
 /// 宏：为包装类型生成所有视图相关操作
@@ -18,17 +21,17 @@ macro_rules! impl_tensor_wrapper {
                 <$view>::new(self.clone())
             }
 
-            pub fn broadcast_to(&self, target_shape: &[usize]) -> Result<$view, String> {
+            pub fn broadcast_to(&self, target_shape: &[usize]) -> anyhow::Result<$view> {
                 let view = self.as_view();
                 view.broadcast_to(target_shape)
             }
 
-            pub fn transpose(&self, axes: &[usize]) -> Result<$view, String> {
+            pub fn transpose(&self, axes: &[usize]) -> anyhow::Result<$view> {
                 let view = self.as_view();
                 view.transpose(axes)
             }
 
-            pub fn T(&self) -> Result<$view, String> {
+            pub fn T(&self) -> anyhow::Result<$view> {
                 let view = self.as_view();
                 view.T()
             }
@@ -71,3 +74,17 @@ impl_tensor_wrapper!(
 
 // 为 ArcTensor 生成实现
 impl_tensor_wrapper!(ArcTensor, ArcTensorView, Tensor::into_arc_raw);
+
+impl RcTensor {
+    pub fn fill<T: bytemuck::Pod + DTypeMapping>(&mut self, value: T) -> anyhow::Result<()> {
+        let mut view = self.as_view();
+        view.fill(value)
+    }
+}
+
+impl ArcTensor {
+    pub fn fill<T: bytemuck::Pod + DTypeMapping>(&mut self, value: T) -> anyhow::Result<()> {
+        let mut view = self.as_view();
+        view.fill(value)
+    }
+}

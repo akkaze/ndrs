@@ -1,4 +1,5 @@
-//! 加法操作宏（Add, AddAssign）
+use anyhow::{Context, Result, anyhow, bail};
+/// 加法操作宏（Add, AddAssign）
 
 #[macro_export]
 macro_rules! impl_add_for_view {
@@ -33,7 +34,9 @@ macro_rules! impl_add_for_view {
         }
 
         impl $view_type {
-            pub fn add(a: &Self, b: &Self, out: &mut Self) -> Result<(), String> {
+            pub fn add(a: &Self, b: &Self, out: &mut Self) -> anyhow::Result<()> {
+                use anyhow::{Context, anyhow, bail};
+
                 let a_cell = a.handle.lock();
                 let a_t = a_cell.borrow();
                 let b_cell = b.handle.lock();
@@ -53,12 +56,12 @@ macro_rules! impl_add_for_view {
                 );
 
                 if a.shape != b.shape || a.shape != out.shape {
-                    return Err("Shape mismatch in add".into());
+                    bail!("Shape mismatch in add");
                 }
 
                 let n = a.shape().iter().product();
                 let add_op = $crate::dtype::get_add_op(a_t.dtype(), a_dev).ok_or_else(|| {
-                    format!(
+                    anyhow!(
                         "Add op not registered for dtype {} on device {:?}",
                         a_t.dtype(),
                         a_dev
@@ -84,23 +87,24 @@ macro_rules! impl_add_for_view {
                         );
                     }
                     $crate::device::Device::Cuda(_) => {
-                        let stream = cuda::get_stream().map_err(|e| e.to_string())?;
+                        let stream =
+                            $crate::cuda::get_stream().context("Failed to get CUDA stream")?;
                         let a_strides_dev = stream
                             .inner()
                             .clone_htod(a.strides())
-                            .map_err(|e| e.to_string())?;
+                            .context("Failed to copy strides to device")?;
                         let b_strides_dev = stream
                             .inner()
                             .clone_htod(b.strides())
-                            .map_err(|e| e.to_string())?;
+                            .context("Failed to copy strides to device")?;
                         let c_strides_dev = stream
                             .inner()
                             .clone_htod(out.strides())
-                            .map_err(|e| e.to_string())?;
+                            .context("Failed to copy strides to device")?;
                         let shape_dev = stream
                             .inner()
                             .clone_htod(a.shape())
-                            .map_err(|e| e.to_string())?;
+                            .context("Failed to copy shape to device")?;
 
                         let a_ptr = a_t.data_ptr(Some(stream.inner()));
                         let b_ptr = b_t.data_ptr(Some(stream.inner()));
@@ -210,7 +214,7 @@ mod tests {
         let b_gpu = b_cpu.into_arc().as_view().to_gpu(0).unwrap();
 
         // 创建输出张量（全零）并上传到 GPU
-        let zero_cpu = Tensor::new_contiguous(vec![2, 2], DTYPE_FLOAT32).unwrap();
+        let zero_cpu = Tensor::new_contiguous(vec![2, 2], DTYPE_FLOAT32, Device::Cpu).unwrap();
         let mut out_gpu = zero_cpu.into_arc().as_view().to_gpu(0).unwrap();
 
         // GPU 加法
@@ -263,7 +267,7 @@ mod tests {
         let a_gpu = a_cpu.into_arc().as_view().to_gpu(0).unwrap();
         let b_gpu = b_cpu.into_arc().as_view().to_gpu(0).unwrap();
 
-        let zero_cpu = Tensor::new_contiguous(vec![2, 2], DTYPE_FLOAT32).unwrap();
+        let zero_cpu = Tensor::new_contiguous(vec![2, 2], DTYPE_FLOAT32, Device::Cpu).unwrap();
         let mut out_gpu = zero_cpu.into_arc().as_view().to_gpu(0).unwrap();
 
         ArcTensorView::add(&a_gpu, &b_gpu, &mut out_gpu).unwrap();
@@ -288,7 +292,7 @@ mod tests {
         let a_gpu = a_cpu.into_arc().as_view().to_gpu(0).unwrap();
         let b_gpu = b_cpu.into_arc().as_view().to_gpu(0).unwrap();
 
-        let zero_cpu = Tensor::new_contiguous(vec![2, 2], DTYPE_FLOAT32).unwrap();
+        let zero_cpu = Tensor::new_contiguous(vec![2, 2], DTYPE_FLOAT32, Device::Cpu).unwrap();
         let mut out_gpu = zero_cpu.into_arc().as_view().to_gpu(0).unwrap();
 
         // 异步加法

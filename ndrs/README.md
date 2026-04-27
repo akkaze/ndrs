@@ -15,12 +15,13 @@
 - **Thread‑local and thread‑safe variants**  
   - `Rc<RefCell<Tensor>>` for single‑threaded speed  
   - `Arc<ReentrantMutex<RefCell<Tensor>>>` for multi‑threading and Python bindings
-- **GPU acceleration** – transparent CPU ↔ GPU transfer, CUDA kernels for element‑wise addition.
-- **CUDA stream support** – asynchronous execution, events for timing and cross‑stream synchronization (`wait_event`).
+- **GPU acceleration** – transparent CPU ↔ GPU transfer, CUDA kernels for element‑wise operations.
+- **CUDA stream support** – asynchronous execution, events for timing and cross‑stream synchronization.
 - **Operator overloading** – `+` and `+=` for tensors with broadcastable shapes.
 - **Python‑like slicing** – intuitive `s!` macro: `s![1..4:2, ..]`.
 - **Broadcasting** – automatic shape expansion.
-- **Custom data types** – register your own primitive or structured types with user‑defined addition operations.
+- **Dynamic CUDA kernels** – compile and launch kernels from PTX or CUDA C++ source at runtime with `RawKernel`.
+- **Custom elementwise kernels** – define your own per‑element operations (e.g., `out = a + b * c`) that work on tensors of any rank and dtype, automatically compiled for GPU.
 - **Structured dtypes** – build compound types (similar to NumPy structured arrays) with named fields.
 - **NPY file I/O** – load and save tensors from/to NumPy `.npy` files (preserving shape, supports `f32`/`i32`).
 - **Convenient `tensor!` macro** – create tensors from nested literals with optional dtype and device specifiers.
@@ -175,6 +176,127 @@ register_dtype(DTYPE_MY_TYPE, TypeInfo { size: std::mem::size_of::<MyType>(), na
 register_add_op(DTYPE_MY_TYPE, Arc::new(mytype_add_op));
 ```
 
+### Custom elementwise kernels (GPU)
+
+ndrs provides a high‑level `ElementwiseKernel` that compiles a user‑defined expression (e.g., `"out = a * b + c"`) into a CUDA kernel at runtime. The kernel automatically respects broadcasting and strides.
+
+```rust
+use ndrs::{tensor, ArcTensorView, cuda};
+use ndrs::builtin_kernels::cuda::ElementwiseKernel;
+use ndrs::view::TensorViewOps;
+use std::sync::Arc;
+
+fn elementwise_example() -> anyhow::Result<()> {
+    cuda::set_device(0)?;
+    let a = tensor!([[1.0, 2.0], [3.0, 4.0]]; f32; "cuda:0");
+    let b = tensor!([[5.0, 6.0], [7.0, 8.0]]; f32; "cuda:0");
+    let mut out = Tensor::new_contiguous(vec![2,2], DTYPE_FLOAT32, Device::Cuda(0))?.into_arc();
+
+    let a_view = a.into_arc().as_view();
+    let b_view = b.into_arc().as_view();
+    let mut out_view = out.as_view();
+
+    // Launch a kernel that computes out = a + b
+    ArcTensorView::elementwise_kernel(&mut out_view, "out = a + b", vec![&a_view, &b_view])?;
+
+    // Or use a more complex expression:
+    // out = a * b + 2.0 * a
+    ArcTensorView::elementwise_kernel(&mut out_view, "out = a * b + 2.0 * a", vec![&a_view, &b_view])?;
+
+    Ok(())
+}
+```
+
+The `ElementwiseKernel` compiles a dedicated kernel for the exact number of dimensions and data types, achieving near‑optimal performance. It works with both `RcTensorView` and `ArcTensorView`.
+
+好的，我将把 `ElementwiseKernel` 和 `RawKernel` 的说明添加到 README 中。以下是更新后的 README 内容（仅展示新增部分，完整 README 需整合）：
+
+---
+
+### Custom elementwise kernels (GPU)
+
+ndrs provides a high‑level `ElementwiseKernel` that compiles a user‑defined expression (e.g., `"out = a * b + c"`) into a CUDA kernel at runtime. The kernel automatically respects broadcasting and strides.
+
+```rust
+use ndrs::{tensor, ArcTensorView, cuda, DTYPE_FLOAT32, Device};
+use ndrs::builtin_kernels::cuda::ElementwiseKernel;
+use ndrs::view::TensorViewOps;
+
+fn elementwise_example() -> anyhow::Result<()> {
+    cuda::set_device(0)?;
+    let a = tensor!([[1.0, 2.0], [3.0, 4.0]]; f32; "cuda:0");
+    let b = tensor!([[5.0, 6.0], [7.0, 8.0]]; f32; "cuda:0");
+    let mut out = Tensor::new_contiguous(vec![2,2], DTYPE_FLOAT32, Device::Cuda(0))?.into_arc();
+
+    let a_view = a.into_arc().as_view();
+    let b_view = b.into_arc().as_view();
+    let mut out_view = out.as_view();
+
+    // Launch a kernel that computes out = a + b
+    ArcTensorView::elementwise_kernel(&mut out_view, "out = a + b", vec![&a_view, &b_view])?;
+
+    // Or use a more complex expression:
+    // out = a * b + 2.0 * a
+    ArcTensorView::elementwise_kernel(&mut out_view, "out = a * b + 2.0 * a", vec![&a_view, &b_view])?;
+
+    Ok(())
+}
+```
+
+The `ElementwiseKernel` compiles a dedicated kernel for the exact number of dimensions and data types, achieving near‑optimal performance. It works with both `RcTensorView` and `ArcTensorView`.
+
+### Low‑level RawKernel (dynamic CUDA kernels)
+
+For complete control, use `RawKernel` to load PTX code or compile CUDA C++ source directly inside your Rust program. This is useful when you want to launch custom‑written CUDA kernels without external compilation steps.
+
+```rust
+use ndrs::cuda::{RawKernel, get_stream, set_device};
+use cudarc::driver::LaunchConfig;
+use ndrs::tensor::Tensor;
+
+fn raw_kernel_example() -> anyhow::Result<()> {
+    set_device(0)?;
+    let stream = get_stream()?;
+    let ctx = stream.inner().context().clone();
+
+    let kernel_src = r#"
+        extern "C" __global__ void times_two(float* out, const float* in, const int n) {
+            int i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i < n) out[i] = 2.0f * in[i];
+        }
+    "#;
+    let kernel = RawKernel::from_source(kernel_src, "times_two", &ctx)?;
+
+    let in_tensor = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0], vec![3]);
+    let in_gpu = in_tensor.into_arc().as_view().to_gpu(0)?;
+    let mut out_gpu = in_gpu.create_output()?;  // zeros on GPU
+
+    let n = in_gpu.size();
+    let block = 256;
+    let grid = (n + block - 1) / block;
+    let cfg = LaunchConfig {
+        grid_dim: (grid as u32, 1, 1),
+        block_dim: (block, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    let mut builder = kernel.launch_builder(stream.inner());
+    // `PushKernelArg` is implemented for `&mut CudaSlice<T>`, `&CudaSlice<T>`, etc.
+    builder.arg(&mut out_gpu.handle().0.lock().borrow_mut().as_gpu_slice_mut().unwrap());
+    builder.arg(&in_gpu.handle().0.lock().borrow().as_gpu_slice().unwrap());
+    builder.arg(&n);
+    unsafe { builder.launch(cfg)?; }
+
+    let result = out_gpu.to_cpu()?.to_vec::<f32>()?;
+    assert_eq!(result, vec![2.0, 4.0, 6.0]);
+    Ok(())
+}
+```
+
+This gives you full flexibility to write and launch any CUDA kernel while still benefiting from ndrs’s tensor views and memory management.
+
+---
+
 ### Custom structured dtypes (Python)
 
 In the Python bindings, you can define **structured dtypes** similar to NumPy’s structured arrays:
@@ -271,7 +393,7 @@ stream2.wait_event(&event)?; // wait on another stream
 
 - **default** – CPU only.
 - **cuda** – enables GPU support (requires CUDA toolkit and `cudarc`).  
-  Enables `cuda::*` functions, `ArcTensorView` GPU transfers, and GPU‑accelerated addition.
+  Enables `cuda::*` functions, `ArcTensorView` GPU transfers, GPU‑accelerated addition, and the `ElementwiseKernel` / `RawKernel` facilities.
 
 ---
 
@@ -403,6 +525,7 @@ After registration, all tensor additions using that dtype and device will route 
 - **Views** are cheap: they copy only shape, strides, offset, and a handle to the underlying `Tensor`.
 - **Strided copy** is optimized for CPU and GPU; non‑contiguous copies use a fallback iterative kernel but are still efficient.
 - **GPU addition** uses a highly optimized CUDA kernel that respects arbitrary strides, achieving near‑peak memory bandwidth.
+- **ElementwiseKernel** compiles a dedicated kernel for the given expression, shape, and dtypes; subsequent calls with the same signature reuse the compiled kernel.
 - **Automatic event tracking** is enabled by default to ensure safe multi‑stream synchronization; you can disable it for maximum throughput if you manage dependencies manually.
 
 ---

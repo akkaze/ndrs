@@ -1,5 +1,4 @@
-//! 张量视图基础模块
-
+/// 张量视图基础模块
 mod broadcast;
 mod slice;
 mod trait_def; // 改名为 trait_def 避免与关键字冲突

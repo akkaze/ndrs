@@ -1,7 +1,7 @@
 use super::*;
 use crate::dtype::{DType, get_dtype_info};
 use crate::tensor::Tensor;
-use cudarc::driver::CudaStream;
+use cudarc::driver::{CudaSlice, CudaStream};
 use std::sync::Arc;
 
 impl Tensor {
@@ -42,5 +42,35 @@ impl Tensor {
             strides[i] = strides[i + 1] * shape[i + 1];
         }
         strides
+    }
+
+    pub fn as_cpu_slice(&self) -> Option<&[u8]> {
+        match &self.data {
+            DataPtr::Cpu(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    pub fn as_cpu_slice_mut(&mut self) -> Option<&mut [u8]> {
+        match &mut self.data {
+            DataPtr::Cpu(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn as_gpu_slice(&self) -> Option<&CudaSlice<u8>> {
+        match &self.data {
+            DataPtr::Gpu(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn as_gpu_slice_mut(&mut self) -> Option<&mut CudaSlice<u8>> {
+        match &mut self.data {
+            DataPtr::Gpu(s) => Some(s),
+            _ => None,
+        }
     }
 }

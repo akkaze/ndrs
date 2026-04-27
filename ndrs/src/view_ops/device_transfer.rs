@@ -1,15 +1,17 @@
-//! 设备间数据传输
-
+/// 设备间数据传输
 use crate::dtype::get_dtype_info;
 use crate::tensor::DataPtr;
 use crate::view::TensorViewOps;
+use anyhow::{Context, Result, anyhow, bail};
 
 #[macro_export]
 macro_rules! impl_device_transfer {
     ($view_type:ident, $handle:ty) => {
-        fn to(&self, out: &mut Self, target_device: Device) -> Result<(), String> {
+        fn to(&self, out: &mut Self, target_device: Device) -> anyhow::Result<()> {
+            use anyhow::{Context, bail};
+
             if self.shape != out.shape {
-                return Err("Shape mismatch".into());
+                bail!("Shape mismatch");
             }
 
             match (self.device, target_device) {
@@ -17,7 +19,7 @@ macro_rules! impl_device_transfer {
                 (Device::Cpu, Device::Cuda(idx)) => {
                     if !self.is_contiguous() {
                         let mut temp = self.create_output()?;
-                        self.contiguous(&mut temp)?;
+                        self.contiguous_into(&mut temp)?;
                         return temp.to(out, target_device);
                     }
                     let src_cell = self.handle.lock();
@@ -26,25 +28,25 @@ macro_rules! impl_device_transfer {
                     let mut dst_tensor = dst_cell.borrow_mut();
                     let dst_gpu = match &mut dst_tensor.data {
                         DataPtr::Gpu(s) => s,
-                        _ => return Err("Output is not GPU memory".into()),
+                        _ => bail!("Output is not GPU memory"),
                     };
                     let src_bytes = match &src_tensor.data {
                         DataPtr::Cpu(b) => b.as_ref(),
                         _ => unreachable!(),
                     };
-                    let stream = cuda::get_stream().map_err(|e| e.to_string())?;
+                    let stream = $crate::cuda::get_stream().context("Failed to get CUDA stream")?;
                     stream
                         .inner()
                         .memcpy_htod(src_bytes, dst_gpu)
-                        .map_err(|e| e.to_string())?;
-                    stream.synchronize().map_err(|e| e.to_string())?;
+                        .context("Failed to copy to GPU")?;
+                    stream.synchronize().context("Failed to synchronize")?;
                     dst_tensor.device = Device::Cuda(idx);
                     Ok(())
                 }
                 (Device::Cuda(_), Device::Cpu) => {
                     if !self.is_contiguous() {
                         let mut temp = self.create_output_on_device(Device::Cpu)?;
-                        self.contiguous(&mut temp)?;
+                        self.contiguous_into(&mut temp)?;
                         return temp.to(out, target_device);
                     }
                     let src_cell = self.handle.lock();
@@ -53,18 +55,18 @@ macro_rules! impl_device_transfer {
                     let mut dst_tensor = dst_cell.borrow_mut();
                     let src_gpu = match &src_tensor.data {
                         DataPtr::Gpu(s) => s,
-                        _ => return Err("Source is not GPU memory".into()),
+                        _ => bail!("Source is not GPU memory"),
                     };
                     let dst_bytes = match &mut dst_tensor.data {
                         DataPtr::Cpu(b) => b.as_mut(),
-                        _ => return Err("Output is not CPU memory".into()),
+                        _ => bail!("Output is not CPU memory"),
                     };
-                    let stream = cuda::get_stream().map_err(|e| e.to_string())?;
+                    let stream = $crate::cuda::get_stream().context("Failed to get CUDA stream")?;
                     stream
                         .inner()
                         .memcpy_dtoh(src_gpu, dst_bytes)
-                        .map_err(|e| e.to_string())?;
-                    stream.synchronize().map_err(|e| e.to_string())?;
+                        .context("Failed to copy to CPU")?;
+                    stream.synchronize().context("Failed to synchronize")?;
                     dst_tensor.device = Device::Cpu;
                     Ok(())
                 }
@@ -73,18 +75,17 @@ macro_rules! impl_device_transfer {
                     self.to(&mut cpu_temp, Device::Cpu)?;
                     cpu_temp.to(out, target_device)
                 }
-                _ => Err("Unsupported device conversion".into()),
+                _ => bail!("Unsupported device conversion"),
             }
         }
 
-        fn to_device(&self, target_device: Device) -> Result<Self, String> {
+        fn to_device(&self, target_device: Device) -> anyhow::Result<Self> {
             let mut out = self.create_output_on_device(target_device)?;
             self.to(&mut out, target_device)?;
             Ok(out)
         }
     };
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

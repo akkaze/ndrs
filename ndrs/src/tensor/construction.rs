@@ -3,6 +3,7 @@ use crate::device::Device;
 use crate::dtype::{DType, DTypeMapping, get_dtype_info};
 use crate::tensor::{DataPtr, Tensor};
 use crate::{DTYPE_FLOAT32, DTYPE_INT32};
+use anyhow::{Context, Result, anyhow, bail};
 use bytemuck::{Pod, cast_slice};
 use cudarc::driver::DevicePtr;
 
@@ -36,36 +37,31 @@ impl Tensor {
         shape: Vec<usize>,
         dtype: DType,
         device: Device,
-    ) -> Result<Self, String> {
-        let elem_size = get_dtype_info(dtype).ok_or("Unknown dtype")?.size;
+    ) -> Result<Self> {
+        let elem_size = get_dtype_info(dtype).context("Unknown dtype")?.size;
         let expected_size = shape.iter().product::<usize>() * elem_size;
         if bytes.len() != expected_size {
-            return Err(format!(
+            bail!(
                 "Byte size mismatch: expected {}, got {}",
                 expected_size,
                 bytes.len()
-            ));
+            );
         }
         let strides = Self::compute_row_major_strides(&shape, elem_size);
         let data = match device {
             Device::Cpu => DataPtr::Cpu(bytes),
             Device::Cuda(dev_id) => {
                 use crate::cuda;
-                let stream = cuda::get_stream().map_err(|e| e.to_string())?;
+                let stream = cuda::get_stream()?;
                 if stream.device_id != dev_id {
-                    return Err(format!(
+                    bail!(
                         "Stream device {} does not match target device {}",
-                        stream.device_id, dev_id
-                    ));
+                        stream.device_id,
+                        dev_id
+                    );
                 }
-                let mut gpu_mem = stream
-                    .inner()
-                    .alloc_zeros::<u8>(bytes.len())
-                    .map_err(|e| e.to_string())?;
-                stream
-                    .inner()
-                    .memcpy_htod(bytes.as_ref(), &mut gpu_mem) // 修复：使用 as_ref()
-                    .map_err(|e| e.to_string())?;
+                let mut gpu_mem = stream.inner().alloc_zeros::<u8>(bytes.len())?;
+                stream.inner().memcpy_htod(bytes.as_ref(), &mut gpu_mem)?;
                 DataPtr::Gpu(gpu_mem)
             }
         };
@@ -79,40 +75,58 @@ impl Tensor {
     }
 
     /// 从字节创建 CPU 张量（向后兼容）
-    pub fn new_cpu_from_bytes(
-        bytes: Box<[u8]>,
-        shape: Vec<usize>,
-        dtype: DType,
-    ) -> Result<Self, String> {
+    pub fn new_cpu_from_bytes(bytes: Box<[u8]>, shape: Vec<usize>, dtype: DType) -> Result<Self> {
         Self::new_from_bytes(bytes, shape, dtype, Device::Cpu)
     }
 
-    /// 创建一个形状为 `shape`、数据类型为 `dtype` 的连续 CPU 张量，内存初始化为零。
-    pub fn new_contiguous(shape: Vec<usize>, dtype: DType) -> Result<Self, String> {
-        let elem_size = get_dtype_info(dtype).ok_or("Unknown dtype")?.size;
-        let total_elements: usize = shape.iter().product();
-        let total_bytes = total_elements * elem_size;
-        let bytes = vec![0u8; total_bytes].into_boxed_slice();
+    /// 创建一个形状为 `shape`、数据类型为 `dtype` 的连续张量，内存初始化为零。
+    pub fn new_contiguous(shape: Vec<usize>, dtype: DType, device: Device) -> Result<Self> {
+        let elem_size = get_dtype_info(dtype).context("Unknown dtype")?.size;
+        let total_bytes = shape.iter().product::<usize>() * elem_size;
         let strides = Self::compute_row_major_strides(&shape, elem_size);
-        Ok(Tensor {
-            data: DataPtr::Cpu(bytes),
-            shape,
-            strides,
-            dtype,
-            device: Device::Cpu,
-        })
+
+        match device {
+            Device::Cpu => {
+                let bytes = vec![0u8; total_bytes].into_boxed_slice();
+                Ok(Tensor {
+                    data: DataPtr::Cpu(bytes),
+                    shape,
+                    strides,
+                    dtype,
+                    device,
+                })
+            }
+            Device::Cuda(dev_id) => {
+                let stream = crate::cuda::get_stream()?;
+                if stream.device_id != dev_id {
+                    bail!(
+                        "Stream device {} does not match target device {}",
+                        stream.device_id,
+                        dev_id
+                    );
+                }
+                let gpu_mem = stream.inner().alloc_zeros::<u8>(total_bytes)?;
+                Ok(Tensor {
+                    data: DataPtr::Gpu(gpu_mem),
+                    shape,
+                    strides,
+                    dtype,
+                    device,
+                })
+            }
+        }
     }
 
-    pub fn from_string_literal(s: &str) -> Result<Self, String> {
+    pub fn from_string_literal(s: &str) -> Result<Self> {
         let (strings, shape, dtype_hint, device): (Vec<&str>, Vec<usize>, Option<DType>, Device) =
             parser::parse_full_tensor_string(s)?;
         let total_elements: usize = shape.iter().product();
         if strings.len() != total_elements {
-            return Err(format!(
+            bail!(
                 "Number of strings ({}) does not match shape product ({})",
                 strings.len(),
                 total_elements
-            ));
+            );
         }
 
         // 确定数据类型
@@ -129,9 +143,7 @@ impl Tensor {
             DTYPE_FLOAT32 => {
                 let mut data = Vec::with_capacity(total_elements);
                 for s in &strings {
-                    let val = s
-                        .parse::<f32>()
-                        .map_err(|e| format!("Failed to parse '{}' as f32: {}", s, e))?;
+                    let val = s.parse::<f32>()?;
                     data.push(val);
                 }
                 bytemuck::cast_slice(&data).to_vec().into_boxed_slice()
@@ -139,14 +151,12 @@ impl Tensor {
             DTYPE_INT32 => {
                 let mut data = Vec::with_capacity(total_elements);
                 for s in &strings {
-                    let val = s
-                        .parse::<i32>()
-                        .map_err(|e| format!("Failed to parse '{}' as i32: {}", s, e))?;
+                    let val = s.parse::<i32>()?;
                     data.push(val);
                 }
                 bytemuck::cast_slice(&data).to_vec().into_boxed_slice()
             }
-            _ => return Err(format!("Unsupported dtype: {}", dtype)),
+            _ => bail!("Unsupported dtype: {}", dtype),
         };
 
         Self::new_from_bytes(bytes, shape, dtype, device)

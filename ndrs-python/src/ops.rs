@@ -8,10 +8,10 @@ pub fn tensor_add_impl(a: &ArcTensorView, b: &ArcTensorView) -> PyResult<PyTenso
     })?;
     let a_bcast = a
         .broadcast_to(&target_shape)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     let b_bcast = b
         .broadcast_to(&target_shape)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     let elem_size = ndrs::dtype::get_dtype_info(a.dtype()).unwrap().size;
     let total_bytes = target_shape.iter().product::<usize>() * elem_size;
     let out_tensor = Tensor::new_cpu_from_bytes(
@@ -19,10 +19,10 @@ pub fn tensor_add_impl(a: &ArcTensorView, b: &ArcTensorView) -> PyResult<PyTenso
         target_shape,
         a.dtype(),
     )
-    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let out_handle = out_tensor.into_arc();
     let mut out_view = ArcTensorView::new(out_handle);
     ArcTensorView::add(&a_bcast, &b_bcast, &mut out_view)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     Ok(PyTensor::from_view(out_view))
 }

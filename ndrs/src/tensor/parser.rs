@@ -1,5 +1,6 @@
 use crate::device::Device;
 use crate::dtype::{DTYPE_FLOAT32, DTYPE_INT32, DType};
+use anyhow::{Result, bail};
 
 /// 去除字符串首尾的双引号（如果存在）
 fn strip_quotes(token: &str) -> &str {
@@ -14,13 +15,13 @@ fn strip_quotes(token: &str) -> &str {
 /// 解析完整的张量字符串，返回 (字符串列表, 形状, 可选的dtype, 设备)
 pub(crate) fn parse_full_tensor_string(
     s: &str,
-) -> Result<(Vec<&str>, Vec<usize>, Option<DType>, Device), String> {
+) -> Result<(Vec<&str>, Vec<usize>, Option<DType>, Device)> {
     let s = s.trim();
 
     // 分离数据部分和后缀部分（用分号分割）
     let parts: Vec<&str> = s.split(';').map(|p| p.trim()).collect();
     if parts.is_empty() {
-        return Err("Empty string".into());
+        bail!("Empty string");
     }
 
     let data_part = parts[0];
@@ -44,10 +45,10 @@ pub(crate) fn parse_full_tensor_string(
             "f32" => dtype = Some(DTYPE_FLOAT32),
             "i32" => dtype = Some(DTYPE_INT32),
             _ => {
-                return Err(format!(
+                bail!(
                     "Unrecognized suffix token: '{}'. Expected dtype (f32/i32) or device (cpu/cuda:N)",
                     token
-                ));
+                );
             }
         }
     }
@@ -57,7 +58,7 @@ pub(crate) fn parse_full_tensor_string(
 
 /// 递归解析嵌套数组字符串，例如 "[[1,2],[3,4]]" -> (vec!["1","2","3","4"], vec![2,2])
 /// 内部函数，不处理后缀。
-fn parse_nested_array(s: &str) -> Result<(Vec<&str>, Vec<usize>), String> {
+fn parse_nested_array(s: &str) -> Result<(Vec<&str>, Vec<usize>)> {
     let s = s.trim();
     if s.is_empty() {
         return Ok((vec![], vec![0]));
@@ -108,7 +109,7 @@ fn parse_nested_array(s: &str) -> Result<(Vec<&str>, Vec<usize>), String> {
     let first_shape = &child_shapes[0];
     for shape in &child_shapes[1..] {
         if shape != first_shape {
-            return Err("Inconsistent dimensions".into());
+            bail!("Inconsistent dimensions");
         }
     }
     let mut shape = vec![elements.len()];
