@@ -38,3 +38,9 @@ impl FromStr for Device {
         }
     }
 }
+
+impl From<Device> for String {
+    fn from(dev: Device) -> String {
+        dev.to_string()
+    }
+}

@@ -1,8 +1,10 @@
 use ndrs::cuda::Stream as CudaStreamInner;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use ndrs::cuda;
 
 #[pyclass(name = "Stream")]
+#[derive(Clone)]
 pub struct PyCudaStream {
     inner: CudaStreamInner,
 }
@@ -45,7 +47,22 @@ impl PyCudaStream {
     }
 }
 
+#[pyfunction]
+fn get_stream() -> PyResult<PyCudaStream> {
+    let stream = cuda::get_stream()
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyCudaStream { inner: stream })
+}
+
+#[pyfunction]
+fn set_stream(stream: PyCudaStream) -> PyResult<()> {
+    cuda::set_stream(stream.inner)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCudaStream>()?;
+    m.add_function(wrap_pyfunction!(get_stream, m)?)?;
+    m.add_function(wrap_pyfunction!(set_stream, m)?)?;
     Ok(())
 }

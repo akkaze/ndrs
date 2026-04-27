@@ -1,6 +1,8 @@
 use ndrs::cuda;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use ndrs::Device;
+use std::str::FromStr;
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(set_device, m)?)?;
@@ -11,13 +13,21 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[pyfunction]
-fn set_device(device_id: usize) -> PyResult<()> {
-    cuda::set_device(device_id).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+fn get_device() -> PyResult<String> {
+    let idx = cuda::get_device();
+    let device = Device::Cuda(idx);
+    Ok(device.to_string())
 }
 
 #[pyfunction]
-fn get_device() -> usize {
-    cuda::get_device()
+fn set_device(device_str: &str) -> PyResult<()> {
+    let device = Device::from_str(device_str)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    match device {
+        Device::Cuda(idx) => cuda::set_device(idx)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string())),
+        Device::Cpu => Err(PyRuntimeError::new_err("Cannot set device to CPU using this function; use CUDA device string like 'cuda:0'")),
+    }
 }
 
 #[pyfunction]

@@ -12,7 +12,7 @@ fn parse_device(s: &str) -> anyhow::Result<Device> {
 
 #[pyclass(name = "PyTensor")]
 pub struct PyTensor {
-    inner: ArcTensor,
+    pub(crate) inner: ArcTensor,
 }
 
 #[pymethods]
@@ -105,4 +105,10 @@ impl PyTensor {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(PyTensorView { inner: view })
     }
+}
+
+
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // 注册 tensor 类
+    m.add_class::<PyTensor>()
 }

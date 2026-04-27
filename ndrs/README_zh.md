@@ -1,6 +1,7 @@
 # ndrs
 
-[English](README.md) | [中文](README_zh.md)
+[![English](https://img.shields.io/badge/English-README-blue)](README.md)
+[![中文](https://img.shields.io/badge/中文-README-blue)](README_zh.md)
 
 **ndrs** 是一个类 NumPy 的 Rust 张量库，提供多维数组（张量）操作，并支持通过 CUDA 实现可选的 GPU 加速。它强调**零拷贝视图**、高效的跨步操作以及灵活的所有权模型。
 

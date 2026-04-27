@@ -2,69 +2,102 @@ import ndrs as nd
 import numpy as np
 import pytest
 
-def _cuda::is_available():
-    return nd.is_cuda::is_available()
+def is_cuda_available():
+    """辅助函数：检查 CUDA 是否可用"""
+    try:
+        return nd.cuda.get_device_count() > 0
+    except Exception:
+        return False
 
-def _skip_if_no_cuda():
-    if not _cuda::is_available():
-        pytest.skip("CUDA not available")
+@pytest.mark.skipif(not is_cuda_available(), reason="CUDA not available")
+def test_cuda_device():
+    """测试设置和获取 CUDA 设备"""
+    nd.cuda.set_device("cuda:0")
+    current = nd.cuda.get_device()
+    assert current == "cuda:0"
 
-class TestDevice:
-    def test_device_context(self):
-        _skip_if_no_cuda()
-        with nd.Device("cuda", 0):
-            current = nd.get_current_device()
-            assert "cuda" in current
+@pytest.mark.skipif(not is_cuda_available(), reason="CUDA not available")
+def test_cuda_stream_basic():
+    """测试 CUDA 流的基本创建、同步和事件记录"""
+    stream = nd.cuda.Stream(device_id=0)
+    assert stream is not None
 
-class TestStream:
-    def test_stream_sync(self):
-        _skip_if_no_cuda()
-        s = nd.Stream()
-        s.synchronize()
+    # 同步（无操作也应通过）
+    stream.synchronize()
 
-    def test_stream_context(self):
-        _skip_if_no_cuda()
-        with nd.Device("cuda", 0):
-            s = nd.Stream()
-            with s:
-                a = nd.Tensor([1.0, 2.0])
-                b = a + 1.0
-                s.synchronize()
-                np.testing.assert_allclose(b.numpy(), [2.0, 3.0])
+    # 记录事件并同步
+    event = stream.record_event()
+    event.synchronize()
 
-class TestEvent:
-    def test_event_create(self):
-        _skip_if_no_cuda()
-        e = nd.Event()
-        assert not e.done  # 未记录时 done 应为 False
-        e.synchronize()
+    # 跨流等待
+    stream2 = nd.cuda.Stream(device_id=0)
+    stream2.wait_event(event)
+    stream2.synchronize()
 
-    def test_event_record(self):
-        _skip_if_no_cuda()
-        with nd.Device("cuda", 0):
-            s = nd.Stream()
-            e = s.record()
-            e.synchronize()
-            assert e.done
+@pytest.mark.skipif(not is_cuda_available(), reason="CUDA not available")
+def test_cuda_stream_set_get():
+    """测试设置和获取当前 CUDA 流"""
+    original = nd.cuda.get_stream()
+    new_stream = nd.cuda.Stream(device_id=0)
 
-class TestCudaVsNumpy:
-    def test_add_2d(self):
-        _skip_if_no_cuda()
-        np_a = np.random.rand(3, 4).astype(np.float32)
-        np_b = np.random.rand(3, 4).astype(np.float32)
-        np_result = np_a + np_b
+    nd.cuda.set_stream(new_stream)
+    current = nd.cuda.get_stream()
 
-        with nd.Device("cuda", 0):
-            tt_a = nd.Tensor(np_a.tolist(), dtype=nd.float32)
-            tt_b = nd.Tensor(np_b.tolist(), dtype=nd.float32)
-            tt_result = (tt_a + tt_b).to("cpu")
+    # 注意：get_stream 可能返回新的 Python 对象，但内部 CudaStream 指针应与 new_stream 相同
+    # 我们通过简单的操作来验证：在自定义流上执行张量运算
+    a = nd.Tensor([1, 2, 3], dtype=nd.float32, device="cuda:0")
+    b = nd.Tensor([4, 5, 6], dtype=nd.float32, device="cuda:0")
+    c = a + b
+    nd.cuda.get_stream().synchronize()  # 等待当前流完成
+    np.testing.assert_allclose(c.numpy(), np.array([5, 7, 9]))
 
-        np.testing.assert_allclose(tt_result.numpy(), np_result, rtol=1e-5)
+    # 恢复原始流
+    nd.cuda.set_stream(original)
 
-    def test_device_transfer(self):
-        _skip_if_no_cuda()
-        np_a = np.random.rand(10).astype(np.float32)
-        t_cpu = nd.Tensor(np_a.tolist(), dtype=nd.float32)
-        t_gpu = t_cpu.to("cuda")
-        t_back = t_gpu.to("cpu")
-        np.testing.assert_allclose(t_back.numpy(), np_a)
+@pytest.mark.skipif(not is_cuda_available(), reason="CUDA not available")
+def test_cuda_stream_tensor_ops():
+    """测试在自定义 CUDA 流上执行张量操作"""
+    stream = nd.cuda.Stream(device_id=0)
+    nd.cuda.set_stream(stream)
+
+    a = nd.Tensor([1.0, 2.0, 3.0], dtype=nd.float32, device="cuda:0")
+    b = nd.Tensor([4.0, 5.0, 6.0], dtype=nd.float32, device="cuda:0")
+    c = a + b
+
+    stream.synchronize()
+    np.testing.assert_allclose(c.numpy(), np.array([5.0, 7.0, 9.0]))
+
+    # 测试事件计时
+    start = stream.record_event()
+    d = a + b   # 额外的运算
+    end = stream.record_event()
+    stream.synchronize()
+
+    elapsed = end.elapsed_time(start)
+    assert elapsed > 0
+
+@pytest.mark.skipif(not is_cuda_available(), reason="CUDA not available")
+def test_cuda_event_sync_between_streams():
+    """测试使用事件进行跨流同步"""
+    stream1 = nd.cuda.Stream(device_id=0)
+    stream2 = nd.cuda.Stream(device_id=0)
+
+    # 在 stream1 上执行操作
+    nd.cuda.set_stream(stream1)
+    a = nd.Tensor([1, 2, 3], dtype=nd.float32, device="cuda:0")
+    b = nd.Tensor([4, 5, 6], dtype=nd.float32, device="cuda:0")
+    c = nd.Tensor([7, 8, 9], dtype=nd.float32, device="cuda:0")
+    d = a + b
+
+    # 记录事件
+    event = stream1.record_event()
+
+    # 切换到 stream2 并等待事件
+    nd.cuda.set_stream(stream2)
+    stream2.wait_event(event)
+
+    # 在 stream2 上执行依赖操作
+    e = c + d
+    stream2.synchronize()
+
+    np.testing.assert_allclose(e.numpy(), np.array([12.0, 15.0, 18.0]))

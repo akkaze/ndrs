@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 mod register;
 mod tensor;
 mod view;
+mod cuda;
 
 use tensor::PyTensor;
 use view::PyTensorView;
@@ -19,10 +20,12 @@ fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[pymodule]
-fn _ndrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // 注册 tensor 类
-    m.add_class::<PyTensor>()?;
-    m.add_class::<PyTensorView>()?;
+fn _ndrs(py: Python,m: &Bound<'_, PyModule>) -> PyResult<()> {
+    tensor::register(m)?;
+    view::register(m)?;
+    let cuda_mod = PyModule::new(py, "cuda")?;
+    cuda::register(&cuda_mod)?;
+    m.add_submodule(&cuda_mod)?;
     // 添加注册函数
     m.add_function(wrap_pyfunction!(register::register_dtype_py, m)?)?;
     m.add_function(wrap_pyfunction!(register::register_binary_op_raw, m)?)?;
