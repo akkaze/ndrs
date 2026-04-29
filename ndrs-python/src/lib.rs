@@ -1,13 +1,15 @@
 use ndrs::{BinaryOpKind, DTYPE_FLOAT32, DTYPE_INT32};
 use pyo3::prelude::*;
 
+mod cuda;
 mod register;
 mod tensor;
 mod view;
-mod cuda;
 
-use tensor::PyTensor;
-use view::PyTensorView;
+use tensor::_Tensor;
+use view::_TensorView;
+
+use pyo3_log;
 
 fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("DTYPE_FLOAT32", DTYPE_FLOAT32)?;
@@ -20,10 +22,11 @@ fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[pymodule]
-fn _ndrs(py: Python,m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _ndrs(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init();
     tensor::register(m)?;
     view::register(m)?;
-    let cuda_mod = PyModule::new(py, "cuda")?;
+    let cuda_mod = PyModule::new(py, "_cuda")?;
     cuda::register(&cuda_mod)?;
     m.add_submodule(&cuda_mod)?;
     // 添加注册函数

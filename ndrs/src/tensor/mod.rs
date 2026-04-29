@@ -14,6 +14,7 @@ use crate::Device;
 pub use access::*;
 pub use construction::*;
 pub use conversion::*;
+use cudarc::driver::CudaSlice;
 pub use data::*;
 pub use handle::{ArcTensor, RcTensor};
 pub use io::{load_npy, save_npy};

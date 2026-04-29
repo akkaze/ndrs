@@ -36,7 +36,7 @@ pub trait TensorViewOps: Clone {
     fn matmul(&self, other: &Self) -> Result<Self>;
     fn shape(&self) -> &[usize];
     fn strides(&self) -> &[usize];
-    fn offset(&self) -> usize;
+    fn offset(&self) -> &usize;
     fn dtype(&self) -> DType;
     fn size(&self) -> usize;
     fn device(&self) -> Device;

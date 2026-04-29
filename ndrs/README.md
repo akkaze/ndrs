@@ -7,6 +7,33 @@
 
 ---
 
+## 📑 Table of Contents
+
+- [Features](#-features)
+- [Quick Start](#-quick-start)
+  - [Basic CPU usage](#basic-cpu-usage-with-the-tensor-macro)
+  - [Creating tensors with dtype/device](#creating-tensors-with-explicit-dtype-and-device)
+  - [GPU usage with CUDA streams](#gpu-usage-with-cuda-streams)
+  - [NPY file I/O](#npy-file-io-numpy-compatibility)
+  - [Custom primitive data types](#custom-primitive-data-types)
+  - [Custom elementwise kernels (GPU)](#custom-elementwise-kernels-gpu)
+  - [Low‑level RawKernel](#low‑level-rawkernel-dynamic-cuda-kernels)
+- [Core Concepts](#-core-concepts)
+- [Cargo Features](#-cargo-features)
+- [Testing](#-testing)
+- [Python Bindings](#-python-bindings)
+  - [Installation](#installation)
+  - [Basic usage](#basic-usage)
+  - [CUDA streams and events from Python](#cuda-streams-and-events-from-python)
+  - [Custom dtypes and operations](#custom-dtypes-and-operations)
+  - [Python API reference](#python-api-reference)
+- [Performance Considerations](#️-performance-considerations)
+- [License](#-license)
+- [Contributing](#-contributing)
+- [Acknowledgments](#-acknowledgments)
+
+---
+
 ## ✨ Features
 
 - **N‑dimensional tensors** – shape, strides, and byte‑level data storage.
@@ -45,39 +72,19 @@ ndrs = "0.4"
 use ndrs::{Tensor, s, tensor};
 
 fn main() -> Result<(), String> {
-    // Create tensors using the convenient `tensor!` macro (supports negatives, floats)
     let a = tensor!([[1, -2], [3, 4]]);      // automatically i32 on CPU
-    let b = tensor!([[5, 6], [7, 8]]);       // i32, shape [2,2]
-
-    // Wrap into a thread‑local shared view (Rc<RefCell<Tensor>>)
+    let b = tensor!([[5, 6], [7, 8]]);
     let a_view = a.into_rc().as_view();
     let b_view = b.into_rc().as_view();
-
-    // Use the '+' operator (broadcasts if shapes differ)
     let c_view = a_view + b_view;
     assert_eq!(c_view.shape(), &[2, 2]);
-
-    // Convert back to a `Vec<i32>`
     let result = c_view.to_vec::<i32>()?;
     assert_eq!(result, vec![6, 4, 10, 12]);
-
-    // In‑place addition with `+=`
-    let mut a_mut = a_view.clone();
-    a_mut += b_view;
-    assert_eq!(a_mut.to_vec::<i32>()?, vec![6, 4, 10, 12]);
-
-    // The underlying `add` method (used by `+`) is also available:
-    let mut out = a_view.create_output()?;   // zeros
-    a_view.add(&b_view, &mut out)?;          // compute out = a + b
-    assert_eq!(out.to_vec::<i32>()?, vec![6, 4, 10, 12]);
-
     Ok(())
 }
 ```
 
 ### Creating tensors with explicit dtype and device
-
-The `tensor!` macro accepts optional `; dtype` and `; "device"` specifiers:
 
 ```rust
 let t = tensor!([[1, 2], [3, 4]]);               // CPU, i32
@@ -93,40 +100,30 @@ let t = tensor!([[1, 2], [3, 4]]; i32; "cuda:1");       // GPU 1, i32
 use ndrs::{tensor, cuda};
 
 fn gpu_stream_example() -> Result<(), String> {
-    // Ensure CUDA is available
     if !cuda::is_available() { return Ok(()); }
     cuda::set_device(0)?;
-
-    // Create two streams
     let stream1 = cuda::Stream::new(Some(0))?;
     let stream2 = cuda::Stream::new(Some(0))?;
 
-    // Create tensors directly on GPU (optional)
     let a = tensor!([[1.0, 2.0], [3.0, 4.0]]; f32; "cuda:0");
     let b = tensor!([[5.0, 6.0], [7.0, 8.0]]; f32; "cuda:0");
-
     let a_view = a.into_arc().as_view();
     let b_view = b.into_arc().as_view();
-    let mut out_gpu = a_view.create_output()?;   // zeros on the same device
+    let mut out_gpu = a_view.create_output()?;
 
-    // Record event to measure kernel time
     let start = stream1.record()?;
     a_view.add(&b_view, &mut out_gpu)?;
     let end = stream1.record()?;
     stream1.synchronize()?;
-    let elapsed = end.elapsed_since(&start)?;
-    println!("GPU addition took {:?}", elapsed);
+    println!("GPU addition took {:?}", end.elapsed_since(&start)?);
 
-    // Stream2 waits for stream1's event before starting
     let event = stream1.record()?;
     stream2.wait_event(&event)?;
     let mut out2_gpu = out_gpu.create_output()?;
     out_gpu.add(&out_gpu, &mut out2_gpu)?;
     stream2.synchronize()?;
-
     let result = out2_gpu.to_cpu()?.to_vec::<f32>()?;
     assert_eq!(result, vec![12.0, 16.0, 20.0, 24.0]);
-
     Ok(())
 }
 ```
@@ -147,8 +144,6 @@ fn npy_example() -> Result<(), String> {
 
 ### Custom primitive data types
 
-You can register your own primitive (non‑structured) types and define addition for them:
-
 ```rust
 use ndrs::{register_dtype, register_add_op, TypeInfo, DType, Device};
 use std::sync::Arc;
@@ -159,95 +154,74 @@ const DTYPE_MY_TYPE: DType = 1000;
 #[derive(Clone, Copy)]
 struct MyType { a: i32, b: i32 }
 
-fn mytype_add_op(
-    a: *const u8, a_strides: *const usize,
-    b: *const u8, b_strides: *const usize,
-    c: *mut u8, c_strides: *const usize,
-    shape: *const usize, ndim: usize, n: usize,
-    dev: Device, stream: Option<*mut std::ffi::c_void>
-) -> Result<(), String> {
-    // Implementation using strides and device discrimination
-    // ...
-    Ok(())
-}
+fn mytype_add_op(/* ... */) -> Result<(), String> { /* ... */ }
 
-// Register
 register_dtype(DTYPE_MY_TYPE, TypeInfo { size: std::mem::size_of::<MyType>(), name: "mytype" });
 register_add_op(DTYPE_MY_TYPE, Arc::new(mytype_add_op));
 ```
 
-### Custom elementwise kernels (GPU)
+### Custom elementwise kernels (GPU) – Rust
 
-ndrs provides a high‑level `ElementwiseKernel` that compiles a user‑defined expression (e.g., `"out = a * b + c"`) into a CUDA kernel at runtime. The kernel automatically respects broadcasting and strides.
-
-```rust
-use ndrs::{tensor, ArcTensorView, cuda};
-use ndrs::builtin_kernels::cuda::ElementwiseKernel;
-use ndrs::view::TensorViewOps;
-use std::sync::Arc;
-
-fn elementwise_example() -> anyhow::Result<()> {
-    cuda::set_device(0)?;
-    let a = tensor!([[1.0, 2.0], [3.0, 4.0]]; f32; "cuda:0");
-    let b = tensor!([[5.0, 6.0], [7.0, 8.0]]; f32; "cuda:0");
-    let mut out = Tensor::new_contiguous(vec![2,2], DTYPE_FLOAT32, Device::Cuda(0))?.into_arc();
-
-    let a_view = a.into_arc().as_view();
-    let b_view = b.into_arc().as_view();
-    let mut out_view = out.as_view();
-
-    // Launch a kernel that computes out = a + b
-    ArcTensorView::elementwise_kernel(&mut out_view, "out = a + b", vec![&a_view, &b_view])?;
-
-    // Or use a more complex expression:
-    // out = a * b + 2.0 * a
-    ArcTensorView::elementwise_kernel(&mut out_view, "out = a * b + 2.0 * a", vec![&a_view, &b_view])?;
-
-    Ok(())
-}
-```
-
-The `ElementwiseKernel` compiles a dedicated kernel for the exact number of dimensions and data types, achieving near‑optimal performance. It works with both `RcTensorView` and `ArcTensorView`.
-
-好的，我将把 `ElementwiseKernel` 和 `RawKernel` 的说明添加到 README 中。以下是更新后的 README 内容（仅展示新增部分，完整 README 需整合）：
-
----
-
-### Custom elementwise kernels (GPU)
-
-ndrs provides a high‑level `ElementwiseKernel` that compiles a user‑defined expression (e.g., `"out = a * b + c"`) into a CUDA kernel at runtime. The kernel automatically respects broadcasting and strides.
+Define per‑element operations that work on tensors of any rank and dtype, automatically compiled for GPU.
 
 ```rust
-use ndrs::{tensor, ArcTensorView, cuda, DTYPE_FLOAT32, Device};
-use ndrs::builtin_kernels::cuda::ElementwiseKernel;
+use ndrs::{tensor, ArcTensorView, cuda, Device, Tensor};
+use ndrs::backend::cuda::ElementwiseKernel;
 use ndrs::view::TensorViewOps;
 
-fn elementwise_example() -> anyhow::Result<()> {
-    cuda::set_device(0)?;
-    let a = tensor!([[1.0, 2.0], [3.0, 4.0]]; f32; "cuda:0");
-    let b = tensor!([[5.0, 6.0], [7.0, 8.0]]; f32; "cuda:0");
-    let mut out = Tensor::new_contiguous(vec![2,2], DTYPE_FLOAT32, Device::Cuda(0))?.into_arc();
+let a = tensor!([[1.0, 2.0], [3.0, 4.0]]; f32; "cuda:0");
+let b = tensor!([[5.0, 6.0], [7.0, 8.0]]; f32; "cuda:0");
+let mut out = Tensor::new_contiguous(vec![2,2], a.dtype(), Device::Cuda(0))?.into_arc();
 
-    let a_view = a.into_arc().as_view();
-    let b_view = b.into_arc().as_view();
-    let mut out_view = out.as_view();
+let a_view = a.into_arc().as_view();
+let b_view = b.into_arc().as_view();
+let mut out_view = out.as_view();
 
-    // Launch a kernel that computes out = a + b
-    ArcTensorView::elementwise_kernel(&mut out_view, "out = a + b", vec![&a_view, &b_view])?;
+// Simple addition
+ArcTensorView::elementwise_kernel(&mut out_view, "out = a + b", vec![&a_view, &b_view])?;
 
-    // Or use a more complex expression:
-    // out = a * b + 2.0 * a
-    ArcTensorView::elementwise_kernel(&mut out_view, "out = a * b + 2.0 * a", vec![&a_view, &b_view])?;
-
-    Ok(())
-}
+// Multi‑statement with local variables
+ArcTensorView::elementwise_kernel(
+    &mut out_view,
+    "float tmp = a * 2.0; out = tmp + b",
+    vec![&a_view, &b_view],
+)?;
 ```
 
-The `ElementwiseKernel` compiles a dedicated kernel for the exact number of dimensions and data types, achieving near‑optimal performance. It works with both `RcTensorView` and `ArcTensorView`.
+### Python custom elementwise kernels
+
+The Python binding provides a CuPy‑like `ElementwiseKernel`:
+
+```python
+import ndrs as nd
+import numpy as np
+
+kernel = nd.cuda.ElementwiseKernel(
+    "X x, Y y",          # input parameters: type placeholder X, variable name x
+    "Z z",               # output parameter: type placeholder Z, variable name z
+    "z = (x - y) * (x - y)",  # expression
+    "squared_diff"       # kernel name (optional)
+)
+
+a = nd.Tensor([1.0, 2.0, 3.0], dtype=nd.float32, device="cuda:0")
+b = nd.Tensor([4.0, 5.0, 6.0], dtype=nd.float32, device="cuda:0")
+c = kernel(a, b)
+np.testing.assert_allclose(c.contiguous().numpy(), [9.0, 9.0, 9.0])
+```
+
+Multi‑statement example:
+
+```python
+kernel = nd.cuda.ElementwiseKernel(
+    "X x, Y y", "Z z",
+    "X a = x + 1; Y b = y * 2; z = a + b",
+    "multi_stmt"
+)
+```
+
+The kernel automatically handles broadcasting, strides, and per‑tensor offsets (e.g., from slicing). Type placeholders (`X`, `Y`, `Z`) are mapped to actual dtypes at call time.
 
 ### Low‑level RawKernel (dynamic CUDA kernels)
-
-For complete control, use `RawKernel` to load PTX code or compile CUDA C++ source directly inside your Rust program. This is useful when you want to launch custom‑written CUDA kernels without external compilation steps.
 
 ```rust
 use ndrs::cuda::{RawKernel, get_stream, set_device};
@@ -269,19 +243,14 @@ fn raw_kernel_example() -> anyhow::Result<()> {
 
     let in_tensor = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0], vec![3]);
     let in_gpu = in_tensor.into_arc().as_view().to_gpu(0)?;
-    let mut out_gpu = in_gpu.create_output()?;  // zeros on GPU
+    let mut out_gpu = in_gpu.create_output()?;
 
     let n = in_gpu.size();
     let block = 256;
     let grid = (n + block - 1) / block;
-    let cfg = LaunchConfig {
-        grid_dim: (grid as u32, 1, 1),
-        block_dim: (block, 1, 1),
-        shared_mem_bytes: 0,
-    };
+    let cfg = LaunchConfig { grid_dim: (grid as u32, 1, 1), block_dim: (block, 1, 1), shared_mem_bytes: 0 };
 
     let mut builder = kernel.launch_builder(stream.inner());
-    // `PushKernelArg` is implemented for `&mut CudaSlice<T>`, `&CudaSlice<T>`, etc.
     builder.arg(&mut out_gpu.handle().0.lock().borrow_mut().as_gpu_slice_mut().unwrap());
     builder.arg(&in_gpu.handle().0.lock().borrow().as_gpu_slice().unwrap());
     builder.arg(&n);
@@ -291,34 +260,6 @@ fn raw_kernel_example() -> anyhow::Result<()> {
     assert_eq!(result, vec![2.0, 4.0, 6.0]);
     Ok(())
 }
-```
-
-This gives you full flexibility to write and launch any CUDA kernel while still benefiting from ndrs’s tensor views and memory management.
-
----
-
-### Custom structured dtypes (Python)
-
-In the Python bindings, you can define **structured dtypes** similar to NumPy’s structured arrays:
-
-```python
-import ndrs as nd
-import numpy as np
-
-# Define a complex dtype composed of two float32 fields
-complex_dtype = nd.dtype.from_fields([
-    ('re', nd.float32),
-    ('im', nd.float32)
-])
-
-# Create a tensor from a NumPy structured array
-data = np.array([(1.0, 2.0), (3.0, 4.0)], dtype=complex_dtype.to_numpy_dtype())
-t = nd.Tensor(data, dtype=complex_dtype)
-
-# Access fields after conversion back to NumPy
-arr = t.numpy()
-print(arr['re'])  # [1.0, 3.0]
-print(arr['im'])  # [2.0, 4.0]
 ```
 
 ---
@@ -340,51 +281,33 @@ A view into a `Tensor` with an optional offset, shape, and strides. All mathemat
 Two concrete view types are provided:
 
 - **`RcTensorView`** – thread‑local variant using `Rc<RefCell<Tensor>>`.  
-  Fast and lightweight for single‑threaded code. All operations are non‑blocking and cheap.
+  Fast and lightweight for single‑threaded code.
 - **`ArcTensorView`** – thread‑safe variant using `Arc<ReentrantMutex<RefCell<Tensor>>>`.  
-  Required for multi‑threaded environments and Python bindings. Locking is automatic and reentrant.
+  Required for multi‑threaded environments and Python bindings.
 
 ### Slice macro `s!`
-Creates a slice descriptor for the `.slice()` method. Supports ranges, steps, single indices, and `..` (all).
-
 ```rust
-let sub = view.slice(&s![1..4, 2..6])?;       // rows 1..4, cols 2..6
-let row = view.slice(&s![2, ..])?;            // single row (dimension reduced)
-let col = view.slice(&s![.., 3])?;            // single column
-let every_other = view.slice(&s![0..8:2, ..])?; // every second row
+let sub = view.slice(&s![1..4, 2..6])?;
+let row = view.slice(&s![2, ..])?;
+let every_other = view.slice(&s![0..8:2, ..])?;
 ```
 
 ### Broadcasting
-Use `broadcast_shapes` to compute the target shape for two tensors, then `broadcast_to` to expand a view.
-
 ```rust
 use ndrs::broadcast_shapes;
-
-let a = Tensor::new_cpu_from_f32(vec![1.0, 2.0, 3.0], vec![3, 1]);
-let b = Tensor::new_cpu_from_f32(vec![4.0, 5.0, 6.0, 7.0], vec![1, 4]);
-let target = broadcast_shapes(a.shape(), b.shape()).unwrap(); // [3, 4]
+let target = broadcast_shapes(a.shape(), b.shape()).unwrap();
 let a_bcast = a_view.broadcast_to(&target)?;
-let b_bcast = b_view.broadcast_to(&target)?;
 ```
 
 ### Device management
-
-- `Device::Cpu` – host memory.
-- `Device::Cuda(id)` – CUDA device with given index.
-- `cuda::set_device(id)` – sets the default device for context creation.
-- `cuda::get_device_count()` – returns number of CUDA‑capable devices.
-- `cuda::get_stream()` / `cuda::set_stream()` – thread‑local current CUDA stream.
+- `Device::Cpu` / `Device::Cuda(id)`
+- `cuda::set_device(id)`, `cuda::get_device_count()`, `cuda::get_stream()`, `cuda::set_stream()`
 
 ### GPU streams and events
-
-- **Streams** allow asynchronous command submission. Use `cuda::Stream::new()` to create a custom non‑default stream.
-- **Events** record points in a stream, can be used for timing (`elapsed_since`) or cross‑stream dependencies (`wait_event`).
-
 ```rust
 let stream = cuda::Stream::new(Some(0))?;
-// ... launch kernels, copy data ...
 let event = stream.record()?;
-stream2.wait_event(&event)?; // wait on another stream
+stream2.wait_event(&event)?;
 ```
 
 ---
@@ -399,132 +322,106 @@ stream2.wait_event(&event)?; // wait on another stream
 
 ## 🧪 Testing
 
-Run all tests (CPU only, GPU tests are ignored by default if no device):
-
 ```bash
-cargo test
-```
-
-To run GPU tests (requires CUDA device):
-
-```bash
-cargo test -- --ignored
+cargo test               # CPU tests only
+cargo test -- --ignored  # includes GPU tests (if CUDA available)
 ```
 
 ---
 
 ## 🐍 Python Bindings
 
-The `ndrs-python` crate provides Python bindings using PyO3. Install from source:
+The `ndrs-python` crate provides Python bindings using PyO3.
+
+### Installation
 
 ```bash
 cd python
-maturin develop
+maturin develop          # CPU only
+maturin develop --features cuda   # with CUDA support
 ```
 
-Then in Python:
+### Basic usage
 
 ```python
 import ndrs as nd
+import numpy as np
 
-# Create a tensor from a nested list (auto‑detects dtype)
 t = nd.Tensor([[1, 2], [3, 4]], dtype=nd.float32)
-
-# Move to GPU and add
 t2 = t.to("cuda:0")
 t3 = t2 + t2
-
-# Convert back to NumPy (requires `numpy` installed)
-print(t3.numpy())   # [[2. 4.]
-                    #  [6. 8.]]
+print(t3.numpy())   # [[2. 4.], [6. 8.]]
 ```
 
-### Customizing operations from Python (overriding built‑in kernels)
-
-You may want to replace ndrs’s default implementation of a binary operation (e.g., `Add`) with your own highly optimized kernel – either for a built‑in dtype like `float32` or for a custom dtype.
-
-The `register_binary_op` function allows you to supply a Python callback that will be invoked for the given dtype, operation, and device. The callback receives raw pointers to the input and output buffers, the number of elements, a device code, and an optional stream pointer. You can use `ctypes` + `numpy` to access the data and perform the computation.
-
-For **performance‑critical** custom kernels, you can write a C/CUDA function, compile it into a shared library, then call it from Python via `ctypes`. This gives you full control over the kernel without sacrificing speed.
-
-**Example: Replace the CPU addition for `float32` with a faster (or vectorized) implementation**
+### CUDA streams and events from Python
 
 ```python
-import ctypes
-import numpy as np
 import ndrs as nd
 
-def fast_float32_add(a_ptr, b_ptr, out_ptr, n, device_code, stream):
-    # Assume the data is contiguous (ndrs will pass contiguous tensors if you call .contiguous() first)
-    # Use numpy for SIMD-optimized addition (or call your own C library)
+nd.cuda.set_device("cuda:0")
+stream1 = nd.cuda.Stream(device_id=0)
+stream2 = nd.cuda.Stream(device_id=0)
+
+a = nd.Tensor([1.0, 2.0, 3.0], dtype=nd.float32, device="cuda:0")
+b = nd.Tensor([4.0, 5.0, 6.0], dtype=nd.float32, device="cuda:0")
+
+nd.cuda.set_stream(stream1)
+c = a + b
+event = stream1.record_event()
+
+nd.cuda.set_stream(stream2)
+stream2.wait_event(event)
+d = c * 2.0
+stream2.synchronize()
+
+print(d.numpy())  # [10. 14. 18.]
+```
+
+### Custom dtypes and operations
+
+**Structured dtypes**:
+```python
+complex_dtype = nd.dtype.from_fields([('re', nd.float32), ('im', nd.float32)])
+data = np.array([(1.0, 2.0), (3.0, 4.0)], dtype=complex_dtype.to_numpy_dtype())
+t = nd.Tensor(data, dtype=complex_dtype)
+```
+
+**Override addition**:
+```python
+def my_add(a_ptr, b_ptr, out_ptr, n, device_code, stream):
+    import ctypes, numpy as np
     a = np.ctypeslib.as_array(ctypes.cast(a_ptr, ctypes.POINTER(ctypes.c_float)), shape=(n,))
     b = np.ctypeslib.as_array(ctypes.cast(b_ptr, ctypes.POINTER(ctypes.c_float)), shape=(n,))
     out = np.ctypeslib.as_array(ctypes.cast(out_ptr, ctypes.POINTER(ctypes.c_float)), shape=(n,))
-    np.add(a, b, out=out)          # NumPy’s vectorized add
-    # Optionally multiply by 2, etc.
-    return 0  # success
+    np.add(a, b, out=out)
+    return 0
 
-# Override the default CPU addition for float32
-nd.register_binary_op(nd.float32, nd.BINARY_OP_ADD, "cpu", fast_float32_add)
+nd.register_binary_op(nd.float32, nd.BINARY_OP_ADD, "cpu", my_add)
 ```
-
-**For CUDA**, you can write a `.ptx` or `.cubin` kernel, load it via `ctypes` or `cupy`, and invoke it inside the callback.
-
-### Overriding from Rust
-
-The Rust API also lets you override operations. This is useful when you want to integrate a kernel written directly in Rust (e.g., using `ndarray` or `rayon`) or a third‑party CUDA kernel.
-
-```rust
-use ndrs::{register_binary_op, BinaryOpKind, Device, BinaryOpFn, DTYPE_FLOAT32};
-use std::sync::Arc;
-
-fn my_fast_add_f32_cpu(
-    a: *const u8, a_strides: *const usize,
-    b: *const u8, b_strides: *const usize,
-    c: *mut u8, c_strides: *const usize,
-    shape: *const usize, ndim: usize, n: usize,
-    dev: Device, stream: Option<*mut std::ffi::c_void>
-) -> Result<(), String> {
-    // Your optimized implementation (e.g., using SIMD or a custom algorithm)
-    // ...
-    Ok(())
-}
-
-let op: BinaryOpFn = Arc::new(my_fast_add_f32_cpu);
-register_binary_op(DTYPE_FLOAT32, BinaryOpKind::Add, Device::Cpu, op);
-```
-
-After registration, all tensor additions using that dtype and device will route through your custom kernel.
-
-### Important notes for custom kernels
-
-- **Contiguity**: The kernel may be called with arbitrary strides. To simplify your implementation, you can first call `.contiguous()` on the tensors inside the kernel (or require the user to do so) – but this will add a copy overhead. For maximum performance, your kernel should be stride‑aware (like ndrs’s default CPU and GPU kernels).
-- **Thread safety**: The callback will be called from possibly multiple threads; it must be safe to use concurrently.
-- **Device‑specific**: You can register different kernels for CPU and CUDA, allowing you to use specialized GPU kernels while keeping a CPU fallback.
-- **Performance gains**: By overriding built‑in operations, you can integrate hand‑tuned CPU vectorization (e.g., using `avx2` intrinsics) or highly optimized CUDA kernels (e.g., using tensor cores) without waiting for ndrs to natively support them.
 
 ### Python API reference
 
 | Function / Class | Description |
 |----------------|-------------|
-| `nd.Tensor(data, dtype=None, device=None)` | Create a tensor from a Python list or NumPy array. |
-| `nd.Tensor.from_numpy(array, device=None)` | Alternative constructor from a NumPy array. |
-| `tensor.shape` | Returns shape as list of ints. |
-| `tensor.dtype` | Returns dtype id (int) or `DType` object for custom dtypes. |
-| `tensor.device` | Returns device string (e.g., `"cpu"`, `"cuda:0"`). |
-| `tensor.numpy()` | Returns a NumPy array (copy). |
-| `tensor.to(device)` | Moves tensor to another device (returns new tensor). |
-| `nd.dtype.from_fields(fields)` | Create a custom structured dtype. `fields` is a list of `(name, dtype_id)`. |
-| `nd.register_dtype(name, itemsize)` | Register a plain (non‑structured) dtype, returns dtype id. |
-| `nd.register_binary_op(dtype, kind, device, callback)` | Register a binary operation callback for a specific dtype and device. `kind` is one of `nd.BINARY_OP_ADD`, `nd.BINARY_OP_SUB`, … |
+| `nd.Tensor(data, dtype=None, device=None)` | Create tensor from list or NumPy array. |
+| `nd.Tensor.from_numpy(array, device=None)` | Alternative constructor from NumPy array. |
+| `tensor.shape` / `tensor.dtype` / `tensor.device` | Basic properties. |
+| `tensor.numpy()` | Copy data to NumPy array. |
+| `tensor.to(device)` | Move tensor to another device. |
+| `nd.dtype.from_fields(fields)` | Create structured dtype. |
+| `nd.register_dtype(name, itemsize)` | Register plain dtype, returns id. |
+| `nd.register_binary_op(dtype, kind, device, callback)` | Override binary op (e.g., `nd.BINARY_OP_ADD`). |
+| `nd.cuda.get_device()`, `set_device(device_str)` | Get/set current CUDA device. |
+| `nd.cuda.Stream(device_id)` | Create a CUDA stream. |
+| `nd.cuda.Event(device_id)` | Create a CUDA event. |
 
 ---
 
 ## ⚙️ Performance Considerations
 
-- **Views** are cheap: they copy only shape, strides, offset, and a handle to the underlying `Tensor`.
-- **Strided copy** is optimized for CPU and GPU; non‑contiguous copies use a fallback iterative kernel but are still efficient.
-- **GPU addition** uses a highly optimized CUDA kernel that respects arbitrary strides, achieving near‑peak memory bandwidth.
+- **Views** are cheap: they copy only shape, strides, offset, and a handle.
+- **Strided copy** is optimized for CPU and GPU; non‑contiguous copies use an iterative kernel but are still efficient.
+- **GPU addition** uses a highly optimized stride‑aware CUDA kernel.
 - **ElementwiseKernel** compiles a dedicated kernel for the given expression, shape, and dtypes; subsequent calls with the same signature reuse the compiled kernel.
 - **Automatic event tracking** is enabled by default to ensure safe multi‑stream synchronization; you can disable it for maximum throughput if you manage dependencies manually.
 

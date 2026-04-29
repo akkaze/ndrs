@@ -1,14 +1,17 @@
 [package]
 edition = "2021"
 name = "ndrs-python"
-version = "0.4.0"
+version = "0.5.0"
 
 [lib]
 crate-type = ["cdylib"]
 name = "_ndrs"
 
 [dependencies]
-ndrs = {version = "0.4.0", path = "../ndrs", features = ["cuda"]}
+ndrs = {version = "0.5.0", path = "../ndrs", features = ["cuda"]}
 anyhow = "1.0"
 numpy = "0.28"
+pyo3-log = "0.13"
+log = "0.4"
+cudarc = {version = "0.19.4", features = ["cuda-12000", "std"]}
 pyo3 = {version = "0.28", features = ["extension-module", "abi3"]}

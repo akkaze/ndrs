@@ -1,6 +1,7 @@
 import numpy as np
-from ._ndrs import PyTensor, DTYPE_FLOAT32, DTYPE_INT32
+from ._ndrs import _Tensor, DTYPE_FLOAT32, DTYPE_INT32
 from .dtype import get_dtype_from_id, DType
+from .view import TensorView
 
 
 def _get_dtype_id(dtype):
@@ -47,7 +48,7 @@ class Tensor:
 
         shape = list(data.shape)
         bytes_data = data.tobytes()
-        self._inner = PyTensor.from_bytes(bytes_data, shape, target_dtype_id, device)
+        self._inner = _Tensor.from_bytes(bytes_data, shape, target_dtype_id, device)
         self._dtype_id = target_dtype_id
         if isinstance(dtype, DType):
             self._custom_dtype = dtype
@@ -112,3 +113,6 @@ class Tensor:
         else:
             dtype_name = "custom"
         return f"Tensor(shape={self.shape}, dtype={dtype_name}, device={self.device})"
+
+    def as_view(self):
+        return TensorView._from_inner(self._inner.as_view())

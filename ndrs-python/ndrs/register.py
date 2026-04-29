@@ -8,6 +8,7 @@ from ._ndrs import (
     BINARY_OP_ADD,
 )
 
+
 def register_dtype(name: str, size: int) -> int:
     """Register a new custom data type, return dtype ID."""
     return _register_dtype(name, size)
@@ -16,6 +17,7 @@ def register_dtype(name: str, size: int) -> int:
 def register_binary_op(dtype, kind, device, func):
     """Register binary op for built-in dtype id or DType instance."""
     from .dtype import DType
+
     if isinstance(dtype, DType):
         dtype_id = dtype.id
     elif isinstance(dtype, int):

@@ -1,4 +1,4 @@
-use crate::PyTensor;
+use crate::_Tensor;
 use ndrs::tensor::ArcTensor;
 use ndrs::ArcTensorView;
 use ndrs::{DType, Device, Tensor, TensorViewOps, DTYPE_FLOAT32, DTYPE_INT32};
@@ -6,13 +6,13 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-#[pyclass(name = "PyTensorView")]
-pub struct PyTensorView {
+#[pyclass(name = "_TensorView")]
+pub struct _TensorView {
     pub(crate) inner: ArcTensorView,
 }
 
 #[pymethods]
-impl PyTensorView {
+impl _TensorView {
     fn shape(&self) -> Vec<usize> {
         self.inner.shape().to_vec()
     }
@@ -29,18 +29,18 @@ impl PyTensorView {
         self.inner.device().to_string()
     }
 
-    fn __add__(&self, other: &PyTensorView) -> Self {
-        PyTensorView {
+    fn __add__(&self, other: &_TensorView) -> Self {
+        _TensorView {
             inner: self.inner.clone() + other.inner.clone(),
         }
     }
 
-    fn contiguous(&self) -> PyResult<PyTensor> {
+    fn contiguous(&self) -> PyResult<_Tensor> {
         let handle = self
             .inner
             .contiguous()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(PyTensor { inner: handle })
+        Ok(_Tensor { inner: handle })
     }
 
     fn broadcast_to(&self, shape: Vec<usize>) -> PyResult<Self> {
@@ -48,7 +48,7 @@ impl PyTensorView {
             .inner
             .broadcast_to(&shape)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(PyTensorView { inner: view })
+        Ok(_TensorView { inner: view })
     }
 
     fn transpose(&self, axes: Vec<usize>) -> PyResult<Self> {
@@ -56,7 +56,7 @@ impl PyTensorView {
             .inner
             .transpose(&axes)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(PyTensorView { inner: view })
+        Ok(_TensorView { inner: view })
     }
 
     fn T(&self) -> PyResult<Self> {
@@ -64,12 +64,11 @@ impl PyTensorView {
             .inner
             .T()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(PyTensorView { inner: view })
+        Ok(_TensorView { inner: view })
     }
 }
 
-
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // 注册 tensor 类
-    m.add_class::<PyTensorView>()
+    m.add_class::<_TensorView>()
 }

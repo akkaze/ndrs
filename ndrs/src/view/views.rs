@@ -158,8 +158,8 @@ macro_rules! impl_tensor_view {
             fn strides(&self) -> &[usize] {
                 &self.strides
             }
-            fn offset(&self) -> usize {
-                self.offset
+            fn offset(&self) -> &usize {
+                &self.offset
             }
             fn dtype(&self) -> DType {
                 self.dtype
@@ -226,7 +226,7 @@ macro_rules! impl_tensor_view {
                 let cell = self.handle.lock();
                 let tensor = cell.borrow();
                 let base_ptr = tensor.data_ptr(None);
-                (base_ptr as *mut u8).add(self.offset())
+                (base_ptr as *mut u8).add(*self.offset())
             }
 
             // 直接调用不带参数的辅助宏，这些宏内部使用 handle.lock() 和 <$handle>::from_tensor
@@ -308,7 +308,7 @@ mod tests {
         let view = t.into_rc().as_view();
         assert_eq!(view.shape(), &[2, 2]);
         assert_eq!(view.strides(), &[8, 4]);
-        assert_eq!(view.offset(), 0);
+        assert_eq!(view.offset(), &0);
     }
 
     // ---------- ArcTensorView 测试 ----------
@@ -318,7 +318,7 @@ mod tests {
         let view = t.into_arc().as_view();
         assert_eq!(view.shape(), &[2, 2]);
         assert_eq!(view.strides(), &[8, 4]);
-        assert_eq!(view.offset(), 0);
+        assert_eq!(view.offset(), &0);
     }
 
     #[test]

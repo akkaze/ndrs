@@ -57,7 +57,7 @@ macro_rules! impl_elementwise_kernel_for_view {
                 let mut kernel =
                     ElementwiseKernel::from_expression(&params_str, &expr, &kernel_name, ctx)?;
 
-                kernel.launch_views(output, inputs)
+                kernel.launch_views(output, inputs, None)
             }
         }
     };

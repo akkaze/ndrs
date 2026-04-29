@@ -8,19 +8,49 @@ use bytemuck::{Pod, cast_slice};
 use cudarc::driver::DevicePtr;
 
 impl Tensor {
+    #[cfg(feature = "cuda")]
+    fn init_device_strides(
+        &self,
+    ) -> anyhow::Result<(Option<CudaSlice<usize>>, Option<CudaSlice<usize>>)> {
+        match self.device {
+            Device::Cpu => Ok((None, None)),
+            Device::Cuda(dev_id) => {
+                let stream = crate::cuda::get_stream()?;
+                if stream.device_id != dev_id {
+                    anyhow::bail!("Stream device mismatch");
+                }
+                let shape_dev = Some(stream.inner().clone_htod(self.shape())?);
+                let strides_dev = Some(stream.inner().clone_htod(self.strides())?);
+                Ok((shape_dev, strides_dev))
+            }
+        }
+    }
+}
+
+impl Tensor {
     // ---------- 构造函数 ----------
-    pub fn new_cpu_from_slice<T: Pod + DTypeMapping>(data: &[T], shape: Vec<usize>) -> Self {
+    pub fn from_slice<T: Pod + DTypeMapping>(
+        data: &[T],
+        shape: Vec<usize>,
+        device: Device,
+    ) -> Result<Self> {
         let dtype = T::DTYPE;
         let elem_size = std::mem::size_of::<T>();
-        let bytes = cast_slice(data).to_vec().into_boxed_slice();
-        let strides = Self::compute_row_major_strides(&shape, elem_size);
-        Tensor {
-            data: DataPtr::Cpu(bytes),
-            shape,
-            strides,
-            dtype,
-            device: Device::Cpu,
+        let expected_size: usize = shape.iter().product();
+        if data.len() != expected_size {
+            bail!(
+                "Data length {} does not match shape product {}",
+                data.len(),
+                expected_size
+            );
         }
+        let bytes = cast_slice(data).to_vec().into_boxed_slice();
+        Self::new_from_bytes(bytes, shape, dtype, device)
+    }
+
+    // ---------- 保留原有 CPU 专用方法（向后兼容）----------
+    pub fn new_cpu_from_slice<T: Pod + DTypeMapping>(data: &[T], shape: Vec<usize>) -> Self {
+        Self::from_slice(data, shape, Device::Cpu).expect("Failed to create CPU tensor")
     }
 
     pub fn new_cpu_from_f32(data: Vec<f32>, shape: Vec<usize>) -> Self {
@@ -84,7 +114,6 @@ impl Tensor {
         let elem_size = get_dtype_info(dtype).context("Unknown dtype")?.size;
         let total_bytes = shape.iter().product::<usize>() * elem_size;
         let strides = Self::compute_row_major_strides(&shape, elem_size);
-
         match device {
             Device::Cpu => {
                 let bytes = vec![0u8; total_bytes].into_boxed_slice();

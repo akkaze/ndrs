@@ -6,7 +6,7 @@ homepage = "https://github.com/akkaze/ndrs"
 license = "MIT OR Apache-2.0"
 name = "ndrs"
 repository = "https://github.com/akkaze/ndrs"
-version = "0.4.0"
+version = "0.5.0"
 
 [dependencies]
 bytemuck = {version = "1.14", features = ["derive"]}
@@ -20,6 +20,7 @@ once_cell = "1.19"
 parking_lot = {version = "0.12", features = ["deadlock_detection"]}
 tempfile = "3"
 anyhow = "1.0"
+regex = "1.12.3"
 thiserror = "1.0"
 threadpool = "1.8"
 
